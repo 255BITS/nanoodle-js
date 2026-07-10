@@ -1,0 +1,13 @@
+{
+  "v": 1,
+  "nodes": [
+    { "id": "n1", "type": "join", "fields": {} },
+    { "id": "n2", "type": "join", "fields": {} },
+    { "id": "n3", "type": "text", "fields": { "text": "seed" } }
+  ],
+  "links": [
+    { "id": "l1", "from": { "node": "n1", "port": "text" }, "to": { "node": "n2", "port": "a" } },
+    { "id": "l2", "from": { "node": "n2", "port": "text" }, "to": { "node": "n1", "port": "a" } },
+    { "id": "l3", "from": { "node": "n3", "port": "text" }, "to": { "node": "n1", "port": "b" } }
+  ]
+}

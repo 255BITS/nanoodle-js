@@ -1,0 +1,7 @@
+{
+  "v": 1,
+  "nodes": [
+    { "id": "n1", "type": "music", "fields": { "model": "suno-v5", "prompt": "lofi beat for studying", "instrumental": "true", "duration": "30", "seed": "11", "extraJson": "{\"style_weight\": 0.6}" } }
+  ],
+  "links": []
+}

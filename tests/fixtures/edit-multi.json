@@ -1,0 +1,12 @@
+{
+  "v": 1,
+  "nodes": [
+    { "id": "n1", "type": "upload", "fields": { "image": "data:image/png;base64,AAA1" } },
+    { "id": "n2", "type": "upload", "fields": { "image": "data:image/png;base64,AAA2" } },
+    { "id": "n3", "type": "edit", "fields": { "model": "nano-banana-2", "prompt": "blend both", "size": "1k", "seed": "42" } }
+  ],
+  "links": [
+    { "id": "l1", "from": { "node": "n1", "port": "image" }, "to": { "node": "n3", "port": "image" } },
+    { "id": "l2", "from": { "node": "n2", "port": "image" }, "to": { "node": "n3", "port": "image2" } }
+  ]
+}

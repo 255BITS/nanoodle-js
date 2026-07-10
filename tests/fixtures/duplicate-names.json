@@ -1,0 +1,9 @@
+{
+  "v": 1,
+  "nodes": [
+    { "id": "n1", "type": "text", "name": "Out", "fields": { "text": "first" } },
+    { "id": "n2", "type": "text", "name": "Out", "fields": { "text": "second" } },
+    { "id": "n3", "type": "text", "fields": { "text": "third" } }
+  ],
+  "links": []
+}

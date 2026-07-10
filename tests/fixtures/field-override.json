@@ -1,0 +1,10 @@
+{
+  "v": 1,
+  "nodes": [
+    { "id": "n1", "type": "text", "fields": { "text": "You are a pirate. Answer in pirate speak." } },
+    { "id": "n2", "type": "llm", "name": "Answer", "fields": { "model": "zai-org/glm-5.2", "system": "typed system that must lose to the wire" } }
+  ],
+  "links": [
+    { "id": "l1", "from": { "node": "n1", "port": "text" }, "to": { "node": "n2", "port": "system" } }
+  ]
+}

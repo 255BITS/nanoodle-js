@@ -1,0 +1,7 @@
+{
+  "v": 1,
+  "nodes": [
+    { "id": "n1", "type": "tvideo", "fields": { "model": "veo-3.1-fast", "prompt": "a fox running through snow", "duration": "5", "aspect": "16:9", "resolution": "720p", "modelOpts": { "seed": 7 } } }
+  ],
+  "links": []
+}

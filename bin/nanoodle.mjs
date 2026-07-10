@@ -1,0 +1,169 @@
+#!/usr/bin/env node
+/**
+ * nanoodle CLI — run and inspect noodle-graph.json workflows.
+ *
+ *   nanoodle run graph.json --input Text="a cozy ramen shop" --input n2.system=@file.txt \
+ *                           --set n3.size=1k --out ./out [--json]
+ *   nanoodle inspect graph.json
+ *
+ * API key: NANOGPT_API_KEY env var (or --key <key>).
+ */
+import { mkdir, readFile } from "node:fs/promises";
+import { join, extname } from "node:path";
+import process from "node:process";
+import { Workflow, RunError, mediaFromFile } from "../src/index.mjs";
+import { MediaRef, extForMime } from "../src/media.mjs";
+
+function usage(code = 1) {
+  console.error(`usage:
+  nanoodle run <graph.json> [--input k=v]... [--set k=v]... [--out dir] [--json] [--key K] [--timeout ms]
+  nanoodle inspect <graph.json>
+
+  --input k=v   set a workflow input ("Text=hello", "n2.system=@notes.txt"; @path reads a file —
+                media files ride as media, .txt/.md/.json as text)
+  --set k=v     override a setting ("n3.model=flux-pro", "n3.size=1k")
+  --out dir     save media outputs into dir (text outputs are printed)
+  --json        print a machine-readable result
+  --key K       NanoGPT API key (defaults to NANOGPT_API_KEY)
+  --timeout ms  overall run timeout`);
+  process.exit(code);
+}
+
+function parseKv(arg, flag) {
+  const eq = arg.indexOf("=");
+  if (eq < 1) { console.error(`${flag} expects key=value, got: ${arg}`); process.exit(1); }
+  return [arg.slice(0, eq), arg.slice(eq + 1)];
+}
+
+const TEXT_EXT = new Set([".txt", ".md", ".json", ".csv", ".html", ".xml"]);
+
+async function resolveValue(v) {
+  if (!v.startsWith("@")) return v;
+  const path = v.slice(1);
+  if (TEXT_EXT.has(extname(path).toLowerCase())) return await readFile(path, "utf8");
+  return mediaFromFile(path);
+}
+
+async function main() {
+  const argv = process.argv.slice(2);
+  const cmd = argv.shift();
+  if (!cmd || cmd === "--help" || cmd === "-h") usage(cmd ? 0 : 1);
+  if (cmd !== "run" && cmd !== "inspect") usage();
+
+  let graphPath = null, outDir = null, asJson = false, apiKey = process.env.NANOGPT_API_KEY, timeoutMs;
+  const inputArgs = [], setArgs = [];
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === "--input") inputArgs.push(argv[++i]);
+    else if (a === "--set") setArgs.push(argv[++i]);
+    else if (a === "--out") outDir = argv[++i];
+    else if (a === "--json") asJson = true;
+    else if (a === "--key") apiKey = argv[++i];
+    else if (a === "--timeout") timeoutMs = +argv[++i];
+    else if (a.startsWith("-")) { console.error("unknown flag: " + a); usage(); }
+    else if (!graphPath) graphPath = a;
+    else { console.error("unexpected argument: " + a); usage(); }
+  }
+  if (!graphPath) usage();
+
+  const wf = await Workflow.load(graphPath, { apiKey });
+
+  if (cmd === "inspect") {
+    const pad = (s, n) => String(s).padEnd(n);
+    console.log("Inputs:");
+    for (const i of wf.inputs) {
+      const extras = [i.optional ? "optional" : "required", i.def != null ? `default: ${JSON.stringify(i.def)}` : null,
+        i.options ? `options: ${i.options.join(" | ")}` : null].filter(Boolean).join(", ");
+      console.log(`  ${pad('"' + i.key + '"', 26)} ${pad(i.nodeId + "." + i.field, 16)} ${pad(i.kind, 9)} ${extras}`);
+    }
+    if (!wf.inputs.length) console.log("  (none)");
+    console.log("Outputs:");
+    for (const o of wf.outputs) {
+      console.log(`  ${pad('"' + o.key + '"', 26)} ${pad(o.nodeId, 16)} ${o.type} → ${o.ports.map((p) => p.name + ":" + p.type).join(", ")}`);
+    }
+    if (!wf.outputs.length) console.log("  (none)");
+    console.log("Settings:");
+    for (const s of wf.settings) {
+      const extras = [s.def != null && s.def !== "" ? `current: ${JSON.stringify(s.def)}` : null,
+        s.options ? `options: ${s.options.join(" | ")}` : null].filter(Boolean).join(", ");
+      console.log(`  ${pad(s.key, 26)} ${pad(s.kind, 9)} ${extras}`);
+    }
+    if (!wf.settings.length) console.log("  (none)");
+    console.log("Nodes:");
+    for (const n of wf.graph.nodes) {
+      console.log(`  ${pad(n.id, 5)} ${pad(n.type, 13)} ${n.name ? '"' + n.name + '"' : ""}`);
+    }
+    for (const w of wf.warnings) console.log("warning: " + w);
+    return;
+  }
+
+  // ---- run ----
+  const inputs = {};
+  for (const arg of inputArgs) {
+    const [k, v] = parseKv(arg, "--input");
+    inputs[k] = await resolveValue(v);
+  }
+  const settings = {};
+  for (const arg of setArgs) {
+    const [k, v] = parseKv(arg, "--set");
+    settings[k] = v;
+  }
+
+  let result;
+  try {
+    result = await wf.run(inputs, {
+      settings, timeoutMs,
+      onProgress: asJson ? undefined : (e) => {
+        if (e.type === "node-start") console.error(`▶ ${e.name} (${e.nodeId})`);
+        if (e.type === "node-done") console.error(`✔ ${e.name} (${e.nodeId}) ${e.ms}ms${e.costUsd != null ? ` $${e.costUsd}` : ""}`);
+        if (e.type === "node-error") console.error(`✖ ${e.name} (${e.nodeId}): ${e.error}`);
+      },
+    });
+  } catch (e) {
+    if (e instanceof RunError && e.result) {
+      console.error("run failed: " + e.message);
+      result = e.result;
+      process.exitCode = 1;
+    } else {
+      console.error("error: " + e.message);
+      process.exit(1);
+    }
+  }
+
+  if (outDir) await mkdir(outDir, { recursive: true });
+  const printable = {};
+  for (const o of wf.outputs) {
+    const value = result.outputs[o.key];
+    if (value === undefined) { printable[o.key] = null; continue; }
+    if (value instanceof MediaRef) {
+      if (outDir) {
+        const safe = o.key.replace(/[^\w.-]+/g, "_");
+        const path = join(outDir, safe + "." + extForMime(value.mime || ""));
+        await value.save(path);
+        printable[o.key] = path;
+        if (!asJson) console.log(`${o.key}: saved ${path}`);
+      } else {
+        printable[o.key] = value.url.length > 200 ? value.url.slice(0, 80) + `… (${value.url.length} chars — use --out to save)` : value.url;
+        if (!asJson) console.log(`${o.key}: ${printable[o.key]}`);
+      }
+    } else {
+      printable[o.key] = value;
+      if (!asJson) console.log(`${o.key}: ${value}`);
+    }
+  }
+  if (asJson) {
+    console.log(JSON.stringify({
+      outputs: printable,
+      costUsd: result.costUsd,
+      costExact: result.costExact,
+      remainingBalance: result.remainingBalance,
+      errors: result.errors,
+      nodes: Object.fromEntries(Object.entries(result.nodes).map(([id, r]) => [id, { status: r.status, ms: r.ms, costUsd: r.costUsd, error: r.error }])),
+    }, null, 2));
+  } else {
+    const approx = result.costExact ? "" : "≥ ";
+    console.error(`cost: ${approx}$${result.costUsd}${result.remainingBalance != null ? ` · balance: $${result.remainingBalance}` : ""}`);
+  }
+}
+
+main().catch((e) => { console.error("error: " + (e && e.message || e)); process.exit(1); });

@@ -1,0 +1,13 @@
+{
+  "v": 1,
+  "nodes": [
+    { "id": "n1", "type": "upload", "fields": { "image": "data:image/png;base64,AAA1" } },
+    { "id": "n2", "type": "resize", "name": "Shrink", "fields": { "mode": "fit", "width": "100", "height": "" } },
+    { "id": "n3", "type": "text", "fields": { "text": "a poem" } },
+    { "id": "n4", "type": "llm", "fields": { "model": "zai-org/glm-5.2", "prompt": "write it" } }
+  ],
+  "links": [
+    { "id": "l1", "from": { "node": "n1", "port": "image" }, "to": { "node": "n2", "port": "image" } },
+    { "id": "l2", "from": { "node": "n3", "port": "text" }, "to": { "node": "n4", "port": "prompt" } }
+  ]
+}
