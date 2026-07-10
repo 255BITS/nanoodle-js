@@ -47,7 +47,12 @@ export function deriveInputs(graph) {
     }
     if (n.type === "choice") {
       const options = String(n.fields.options || "").split("\n").map((s) => s.trim()).filter(Boolean);
-      entries.push({ ...mk(n, "selected", "Choice", "choice", false), options });
+      const e = { ...mk(n, "selected", "Choice", "choice", false), options };
+      // The play page renders this input as a <select>, which always holds a value: an unset or
+      // stale `selected` shows (and submits) the FIRST option — mirror that here, matching the
+      // choice runner's own fallback, instead of tripping the upfront required-input check.
+      if (e.def == null || !options.includes(String(e.def))) e.def = options[0];
+      entries.push(e);
       continue;
     }
     const specs = INPUT_SPECS[n.type];
