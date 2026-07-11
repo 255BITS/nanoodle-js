@@ -11,13 +11,13 @@ Looking for Python? → **[nanoodle-py](https://github.com/255BITS/nanoodle-py)*
 
 ## At a glance
 
-![Pipeline: nanoodle editor → noodle-graph.json → JS executor → NanoGPT API](docs/diagram-pipeline.svg)
+![Pipeline: nanoodle editor → noodle-graph.json → JS executor → NanoGPT API](docs/diagram-pipeline.jpg)
 
 **Build once, run anywhere.** The browser app is for designing and testing.
 This package is for automating the same workflows in scripts, servers, and
 agents.
 
-![Execution: Workflow.load → wf.run → topological order / concurrent lanes → result](docs/diagram-execution.svg)
+![Execution: Workflow.load → wf.run → topological order / concurrent lanes → result](docs/diagram-execution.jpg)
 
 | | |
 |---|---|
