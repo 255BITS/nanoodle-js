@@ -1,13 +1,13 @@
 # nanoodle (JavaScript)
 
 **Run visual AI workflows from Node.js.** Design them in the
-[nanoodle](https://nanoodle.io) editor, save as `noodle-graph.json`, then load
+[nanoodle](https://nanoodle.com) editor, save as `noodle-graph.json`, then load
 and re-run them here — same graph, same [NanoGPT](https://nano-gpt.com) API,
 your own key.
 
 Zero runtime dependencies. Library + CLI in one install.
 
-Looking for Python? → **[nanoodle-py](https://github.com/255BITS/nanoodle-py)**
+Looking for Python? → **[nanoodle-py](https://github.com/nanoodlecom/nanoodle-py)**
 
 ## At a glance
 
@@ -23,8 +23,8 @@ agents.
 |---|---|
 | **Package** | `nanoodle` on npm |
 | **Runtime** | Node ≥ 20 · built-in `fetch` · no deps |
-| **Sibling** | [Python package](https://github.com/255BITS/nanoodle-py) (same graphs, same semantics) |
-| **Editor** | [nanoodle.io](https://nanoodle.io) — wire nodes, hit 💾, download the graph |
+| **Sibling** | [Python package](https://github.com/nanoodlecom/nanoodle-py) (same graphs, same semantics) |
+| **Editor** | [nanoodle.com](https://nanoodle.com) — wire nodes, hit 💾, download the graph |
 
 ## Install
 
@@ -138,7 +138,7 @@ shell. Recipe and template: [docs/agent-skills.md](docs/agent-skills.md).
 **Example skill** (idea → LLM prompt → poster image):
 
 ```bash
-npx skills add 255BITS/nanoodle-js@poster-generator -g -y
+npx skills add nanoodlecom/nanoodle-js@poster-generator -g -y
 ```
 
 Source: [examples/agent-skill/poster-generator/](examples/agent-skill/poster-generator/).
@@ -166,7 +166,7 @@ Format and execution semantics live in [docs/](docs/):
 [DESIGN.md](docs/DESIGN.md), [SPEC-format.md](docs/SPEC-format.md),
 [SPEC-engine.md](docs/SPEC-engine.md), [SPEC-io.md](docs/SPEC-io.md).
 
-Same contract as the [Python package](https://github.com/255BITS/nanoodle-py).
+Same contract as the [Python package](https://github.com/nanoodlecom/nanoodle-py).
 
 Tests run fully offline against a mock NanoGPT server (`tests/harness/`):
 
@@ -181,4 +181,4 @@ graph’s image step).
 ## License
 
 MIT — see [LICENSE](LICENSE). Not affiliated with NanoGPT. Build workflows at
-[nanoodle.io](https://nanoodle.io).
+[nanoodle.com](https://nanoodle.com).

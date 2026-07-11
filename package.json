@@ -41,12 +41,12 @@
     "zero-dependencies"
   ],
   "license": "MIT",
-  "homepage": "https://nanoodle.io",
+  "homepage": "https://nanoodle.com",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/255BITS/nanoodle-js.git"
+    "url": "git+https://github.com/nanoodlecom/nanoodle-js.git"
   },
   "bugs": {
-    "url": "https://github.com/255BITS/nanoodle-js/issues"
+    "url": "https://github.com/nanoodlecom/nanoodle-js/issues"
   }
 }

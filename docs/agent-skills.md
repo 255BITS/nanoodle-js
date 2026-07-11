@@ -1,6 +1,6 @@
 # Turn a nanoodle workflow into a coding-agent skill
 
-A [nanoodle](https://nanoodle.io) workflow you built visually can become a *skill*: a small
+A [nanoodle](https://nanoodle.com) workflow you built visually can become a *skill*: a small
 folder with a markdown playbook that tells a coding agent (Claude Code, Cursor, Grok, or any
 agent that can read markdown and run a shell command) exactly how to execute your workflow.
 The agent supplies the inputs, this package does the API calls, and the outputs land in a
@@ -10,7 +10,7 @@ No skill-building experience needed — the whole recipe is five steps.
 
 ## 1. Build and save your workflow
 
-Design the workflow at [nanoodle.io](https://nanoodle.io) (it runs entirely in your browser
+Design the workflow at [nanoodle.com](https://nanoodle.com) (it runs entirely in your browser
 with your own NanoGPT key). When it works, press **💾 Save** — you get a
 `noodle-graph.json` file. That file is the workflow; this package re-executes it as-is.
 
@@ -50,7 +50,7 @@ agents only need the folder somewhere they can read `SKILL.md` and run commands
 symlinks):
 
 ```sh
-npx skills add 255BITS/nanoodle-js@poster-generator -g -y
+npx skills add nanoodlecom/nanoodle-js@poster-generator -g -y
 ```
 
 Replace `poster-generator` with your skill's frontmatter `name` when publishing your own
@@ -59,14 +59,14 @@ repo. The CLI discovers skills nested under `examples/` (or anywhere a `SKILL.md
 ### JavaScript vs Python skills
 
 This repo's example skill is named `poster-generator`. The sibling
-[nanoodle-py](https://github.com/255BITS/nanoodle-py) package ships a skill with the **same
+[nanoodle-py](https://github.com/nanoodlecom/nanoodle-py) package ships a skill with the **same
 name** (same workflow, Python CLI). Installing both into the same agent skill root
 **overwrites** — pick one runtime:
 
 | Runtime | Install skill | Run command |
 |---------|---------------|-------------|
-| Node (this package) | `npx skills add 255BITS/nanoodle-js@poster-generator -g -y` | `npx nanoodle run …` |
-| Python | `npx skills add 255BITS/nanoodle-py@poster-generator -g -y` | `python -m nanoodle run …` |
+| Node (this package) | `npx skills add nanoodlecom/nanoodle-js@poster-generator -g -y` | `npx nanoodle run …` |
+| Python | `npx skills add nanoodlecom/nanoodle-py@poster-generator -g -y` | `python -m nanoodle run …` |
 
 ## 4. Inspect the workflow to see its real interface
 
@@ -158,7 +158,7 @@ named `Poster`, so the command reads `--input "Idea=..."` and the result saves a
 Install that example for coding agents:
 
 ```sh
-npx skills add 255BITS/nanoodle-js@poster-generator -g -y
+npx skills add nanoodlecom/nanoodle-js@poster-generator -g -y
 ```
 
 Skills built this way work for Claude Code out of the box
