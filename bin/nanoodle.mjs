@@ -19,6 +19,7 @@ function usage(code = 1) {
   console.error(`usage:
   nanoodle run <graph.json> [--input k=v]... [--set k=v]... [--out dir] [--json] [--key K] [--env-file path] [--timeout ms]
   nanoodle inspect <graph.json> [--key K] [--env-file path]
+  nanoodle --version
 
   --input k=v   set a workflow input ("Text=hello", "n2.system=@notes.txt"; @path reads a file —
                 media files ride as media, .txt/.md/.json as text)
@@ -49,6 +50,11 @@ async function resolveValue(v) {
 async function main() {
   const argv = process.argv.slice(2);
   const cmd = argv.shift();
+  if (cmd === "--version") {
+    const pkg = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
+    console.log(`nanoodle ${pkg.version}`);
+    process.exit(0);
+  }
   if (!cmd || cmd === "--help" || cmd === "-h") usage(cmd ? 0 : 1);
   if (cmd !== "run" && cmd !== "inspect") usage();
 

@@ -280,7 +280,7 @@ export class NanoClient {
       mime = ((r.headers && r.headers.get && r.headers.get("content-type")) || "audio/mpeg").split(";")[0];
     }
     if (bytes.length > 3.5 * 1024 * 1024) {
-      throw new NanoodleError("this clip is too big to transcribe directly (~3 MB max) — nanoodle sends audio inline; use a shorter clip");
+      throw new NanoodleError("this clip is too big to transcribe directly (~3.5 MB max) — nanoodle sends audio inline; use a shorter clip");
     }
     const ext = ((mime || "audio/mp3").split("/")[1] || "mp3").split(";")[0];
     const fd = new FormData();

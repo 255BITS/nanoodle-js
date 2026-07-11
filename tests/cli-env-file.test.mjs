@@ -146,3 +146,11 @@ test("CLI: inspect accepts --env-file (works offline, no key needed)", async () 
   assert.match(r.stdout, /Outputs:/);
   assert.ok(!/sk-unused/.test(r.stdout + r.stderr), "inspect must never print the key");
 });
+
+test("CLI: --version prints the package version and exits 0", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const pkg = JSON.parse(await readFile(join(dirname(fileURLToPath(import.meta.url)), "..", "package.json"), "utf8"));
+  const r = await runCli(["--version"], cleanEnv());
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.stdout.trim(), `nanoodle ${pkg.version}`);
+});
