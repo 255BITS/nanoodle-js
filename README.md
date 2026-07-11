@@ -1,17 +1,30 @@
-# nanoodle
+# nanoodle (JavaScript)
 
-**Run [nanoodle](https://nanoodle.io) visual AI workflows from JavaScript.** nanoodle is a
-no-server, bring-your-own-key editor where you wire AI nodes (LLMs, image, video, audio) into a
-graph and download it as `noodle-graph.json`. This package is the zero-dependency executor for
-those files: load a saved workflow, feed it inputs, get its outputs — same execution semantics
-as the app (topological order, concurrent lanes, wired-field overrides), against the same
-[NanoGPT](https://nano-gpt.com) API. Build and test workflows visually at
-[nanoodle.io](https://nanoodle.io); automate them here.
+**Run visual AI workflows from Node.js.** Design them in the
+[nanoodle](https://nanoodle.io) editor, save as `noodle-graph.json`, then load
+and re-run them here — same graph, same [NanoGPT](https://nano-gpt.com) API,
+your own key.
 
-- Zero runtime dependencies — Node >= 20, built-in `fetch`
-- Text, image, video (submit + poll), audio (sync + async poll), vision, transcription
-- Cost tracking per node and per run
-- Library and CLI in one install
+Zero runtime dependencies. Library + CLI in one install.
+
+Looking for Python? → **[nanoodle-py](https://github.com/255BITS/nanoodle-py)**
+
+## At a glance
+
+![Pipeline: nanoodle editor → noodle-graph.json → JS executor → NanoGPT API](docs/diagram-pipeline.svg)
+
+**Build once, run anywhere.** The browser app is for designing and testing.
+This package is for automating the same workflows in scripts, servers, and
+agents.
+
+![Execution: Workflow.load → wf.run → topological order / concurrent lanes → result](docs/diagram-execution.svg)
+
+| | |
+|---|---|
+| **Package** | `nanoodle` on npm |
+| **Runtime** | Node ≥ 20 · built-in `fetch` · no deps |
+| **Sibling** | [Python package](https://github.com/255BITS/nanoodle-py) (same graphs, same semantics) |
+| **Editor** | [nanoodle.io](https://nanoodle.io) — wire nodes, hit 💾, download the graph |
 
 ## Install
 
@@ -27,21 +40,21 @@ import { Workflow } from "nanoodle";
 
 const wf = await Workflow.load("noodle-graph.json");           // key from NANOGPT_API_KEY
 const result = await wf.run({ Text: "a cozy ramen shop on a rainy night" });
-await result.get("Image").save("ramen.png");                   // media outputs: MediaRef (url + bytes()/save())
+await result.get("Image").save("ramen.png");                   // media: MediaRef (url + bytes()/save())
 console.log(result.costUsd, result.remainingBalance);
 ```
 
-With the starter graph from the app (text → LLM prompt-writer → image), that's the whole program.
+With the app’s starter graph (text → LLM prompt-writer → image), that’s the whole program.
 
 ## Quickstart (CLI)
 
-Inspect first — it's offline and shows the workflow's inputs, outputs, and settings:
+Inspect first — offline; shows inputs, outputs, and settings:
 
 ```bash
 npx nanoodle inspect graph.json
 ```
 
-Then run (this calls the NanoGPT API and spends from your balance):
+Then run (calls NanoGPT and spends from your balance):
 
 ```bash
 export NANOGPT_API_KEY=...   # or --key K, or --env-file .env
@@ -49,9 +62,10 @@ npx nanoodle run graph.json --input Text="a cozy ramen shop" --out ./out
 npx nanoodle run graph.json --input n2.system=@style.txt --set n3.size=1k --json
 ```
 
-`--env-file path` reads `NANOGPT_API_KEY` from a `.env`-style file (`--key` wins if both are
-given). `--input k=@path` reads a file — media files ride as media, `.txt`/`.md`/`.json` as
-text. `--out dir` saves media outputs to disk; `--json` prints a machine-readable result.
+- `--env-file path` — load `NANOGPT_API_KEY` from a `.env`-style file (`--key` wins if both are set)
+- `--input k=@path` — read a file (media as media; `.txt` / `.md` / `.json` as text)
+- `--out dir` — save media outputs to disk
+- `--json` — machine-readable result
 
 ## Inputs, outputs, settings
 
@@ -61,10 +75,11 @@ wf.outputs   // [{ key: "Image", nodeId: "n3", type: "image", ports: [{ name: "i
 wf.settings  // [{ key: "n3.model", kind: "model", def: "nano-banana-2-lite" }, ...]
 ```
 
-Input keys resolve flexibly (case-insensitive): the node's custom name (`"Text"`),
-`nodeId.field` (`"n2.system"`), a bare node id, or the input's label. Output keys are the sink
-node's custom name (or its type name). A workflow with exactly one required input also accepts
-a bare value: `wf.run("hello")`. Settings use `nodeId.field` keys (`"n3.model"`).
+Input keys are flexible (case-insensitive): the node’s custom name (`"Text"`),
+`nodeId.field` (`"n2.system"`), a bare node id, or the input’s label. Output
+keys are the sink node’s custom name (or its type name). A workflow with
+exactly one required input also accepts a bare value: `wf.run("hello")`.
+Settings use `nodeId.field` keys (`"n3.model"`).
 
 ### Media inputs
 
@@ -76,8 +91,9 @@ await wf.run({ Image: "https://example.com/photo.jpg" });      // hosted URL
 await wf.run({ Image: bytesUint8Array });                      // raw bytes (MIME sniffed)
 ```
 
-Media is sent inline as base64 (NanoGPT has no upload endpoint); files over ~4.4 MB
-(~3.5 MB for transcription) are refused locally with a clear error before any paid call.
+Media is sent inline as base64 (NanoGPT has no upload endpoint). Files over
+~4.4 MB (~3.5 MB for transcription) are refused locally with a clear error
+before any paid call.
 
 ### Progress and errors
 
@@ -92,10 +108,11 @@ const result = await wf.run(
 );
 ```
 
-`run()` rejects with `RunError` when an output (sink) node failed — `err.result` still carries
-the partial results, per-node statuses, and cost so far. Failures in lanes no output depends on
-only surface in `result.errors`. Unknown/unsupported node types, missing required inputs, bad
-keys, and a missing API key all fail **before** anything is spent.
+`run()` rejects with `RunError` when an output (sink) node fails —
+`err.result` still has partial results, per-node statuses, and cost so far.
+Failures in lanes no output depends on only appear in `result.errors`.
+Unknown/unsupported node types, missing required inputs, bad keys, and a
+missing API key all fail **before** anything is spent.
 
 ## Supported nodes
 
@@ -105,35 +122,42 @@ keys, and a missing API key all fail **before** anything is spent.
 | NanoGPT | llm (incl. vision + audio input), image, draw, edit, inpaint*, vision, tvideo, ivideo, vedit, lipsync, music, remix, tts, transcribe |
 | **not supported** (browser-only media processing) | resize, vframes, combine, soundtrack, trim, extractaudio |
 
-Workflows containing unsupported node types load with a warning and fail fast at `run()` with
-`UnsupportedNodeError` — before any network call.
+Workflows with unsupported node types load with a warning and fail fast at
+`run()` with `UnsupportedNodeError` — before any network call.
 
-\* inpaint caveat: the browser app composites the mask onto black at the source's pixel size;
-this library passes your mask through verbatim, so supply a black/white mask matching the
-source dimensions.
+\* **inpaint:** the browser app composites the mask onto black at the source
+pixel size; this library passes your mask through verbatim. Supply a
+black/white mask matching the source dimensions.
 
 ## Use it as an agent skill
 
-A saved workflow plus a short `SKILL.md` playbook makes a skill any coding agent can run —
-Claude Code (`.claude/skills/<name>/SKILL.md`) or anything that reads markdown and runs shell.
-Recipe + copy-pasteable template: [docs/agent-skills.md](docs/agent-skills.md); complete
-example: [examples/agent-skill/poster-generator/](examples/agent-skill/poster-generator/).
+A saved workflow plus a short `SKILL.md` playbook is a skill any coding agent
+can run — Claude Code (`.claude/skills/<name>/SKILL.md`) or anything that
+reads markdown and runs shell. Recipe and template:
+[docs/agent-skills.md](docs/agent-skills.md). Full example:
+[examples/agent-skill/poster-generator/](examples/agent-skill/poster-generator/).
 
 ## API key and cost
 
-This is bring-your-own-key: you need a [nano-gpt.com](https://nano-gpt.com) API key (or OAuth
-access token) with balance, and **every `run()` spends real money** — NanoGPT bills per
-generation. The library reports what each run cost: `result.costUsd` totals the prices NanoGPT
-returned, `result.costExact` turns false when any call omitted a price (the total is then a
-floor), and `result.remainingBalance` is the freshest balance the API reported. A price of 0
-means known-included (subscription), not unknown. `inspect` and loading/validating workflows
-never call the API.
+Bring your own [nano-gpt.com](https://nano-gpt.com) API key (or OAuth access
+token) with balance. **Every `run()` spends real money** — NanoGPT bills per
+generation.
+
+- `result.costUsd` — total of prices NanoGPT returned
+- `result.costExact` — `false` if any call omitted a price (total is then a floor)
+- `result.remainingBalance` — freshest balance the API reported
+
+A price of `0` means known-included (subscription), not unknown. `inspect`
+and loading/validating workflows never call the API. No telemetry, no
+analytics; the API key is never logged.
 
 ## Specs and testing
 
-The format and execution semantics are specified in [docs/](docs/):
+Format and execution semantics live in [docs/](docs/):
 [DESIGN.md](docs/DESIGN.md), [SPEC-format.md](docs/SPEC-format.md),
 [SPEC-engine.md](docs/SPEC-engine.md), [SPEC-io.md](docs/SPEC-io.md).
+
+Same contract as the [Python package](https://github.com/255BITS/nanoodle-py).
 
 Tests run fully offline against a mock NanoGPT server (`tests/harness/`):
 
@@ -141,8 +165,9 @@ Tests run fully offline against a mock NanoGPT server (`tests/harness/`):
 npm test
 ```
 
-An opt-in live probe (spends a fraction of a cent) exists for hand-verification:
-`node scripts/live-spot-check.mjs` (add `--image` to also run the starter graph's image step).
+Opt-in live probe (spends a fraction of a cent):
+`node scripts/live-spot-check.mjs` (add `--image` to also run the starter
+graph’s image step).
 
 ## License
 
