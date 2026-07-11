@@ -76,7 +76,9 @@ export function sleep(ms, signal) {
  */
 export class NanoClient {
   constructor({ apiKey, baseUrl = "https://nano-gpt.com", fetch = globalThis.fetch, pollIntervals = {}, timeouts = {} } = {}) {
-    this.apiKey = apiKey;
+    // non-enumerable: console.log/util.inspect/JSON.stringify of a client (or a Workflow holding
+    // one) must never print the key
+    Object.defineProperty(this, "apiKey", { value: apiKey, writable: true, enumerable: false, configurable: true });
     this.baseUrl = String(baseUrl).replace(/\/+$/, "");
     this.fetch = fetch;
     this.pollIntervals = { video: 5000, audio: 3000, ...pollIntervals };
@@ -173,6 +175,7 @@ export class NanoClient {
     if (opts.videoDataUrl) body.videoDataUrl = opts.videoDataUrl;
     if (opts.audioUrl) body.audioUrl = opts.audioUrl;
     if (opts.audioDataUrl) body.audioDataUrl = opts.audioDataUrl;
+    if (opts.lora) Object.assign(body, opts.lora); // LoRA params (lora_url_1.. for LTX video)
     if (opts.extra) Object.assign(body, opts.extra); // fields.modelOpts — per-model knobs incl. seed
     // node-owned dims win over stale modelOpts copies (twin of the app runtime)
     if (opts.duration) body.duration = opts.duration;
@@ -294,6 +297,19 @@ export class NanoClient {
       : j.data && (j.data.transcription != null ? j.data.transcription : j.data.text);
     if (txt == null) throw new NanoodleError("no transcription in response");
     return txt;
+  }
+
+  /**
+   * Download hosted media (CDN — no auth headers) and inline it as a data: URL.
+   * Used when a chat audio part needs base64 bytes but the upstream node produced an https URL.
+   */
+  async fetchMediaDataUrl(url, { signal } = {}) {
+    const r = await this.fetch(url, { signal });
+    if (!r.ok) throw new NanoodleError("couldn't download media to inline (" + r.status + "): " + url);
+    const bytes = new Uint8Array(await r.arrayBuffer());
+    const ct = (((r.headers && r.headers.get && r.headers.get("content-type")) || "").split(";")[0] || "").trim().toLowerCase();
+    const mime = ct && ct !== "application/octet-stream" && ct !== "binary/octet-stream" ? ct : undefined;
+    return bytesToDataUrl(bytes, mime); // sniffs magic bytes when the CDN's content-type is generic
   }
 
   /** Optional helper: POST /api/check-balance → { usd_balance }. */

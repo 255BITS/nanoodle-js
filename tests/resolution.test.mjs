@@ -14,14 +14,15 @@ test("Workflow.fromJSON accepts a raw JSON string (the downloaded save's exact b
   assert.equal(wf.inputs[0].key, "Text");
 });
 
-test("inpaint input derivation: nothing wired → prompt + brushable image", () => {
+test("inpaint input derivation: nothing wired → prompt + image + mask (the app's brush widget captures both)", () => {
   const wf = Workflow.fromJSON({
     nodes: [{ id: "n1", type: "inpaint", fields: { model: "flux-fill" } }],
     links: [],
   }, noNet);
   assert.deepEqual(wf.inputs.map((i) => [i.field, i.label]), [
     ["prompt", "What to paint in"],
-    ["image", "Image — brush the area to repaint"],
+    ["image", "Image — the picture to repaint"],
+    ["mask", "Mask (white = repaint)"],
   ]);
 });
 

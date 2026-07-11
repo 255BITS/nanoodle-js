@@ -40,9 +40,13 @@ export function deriveInputs(graph) {
     if (n.unknown) continue;
     if (n.type === "inpaint") {
       if (!fed(n.id, "prompt")) entries.push(mk(n, "prompt", "What to paint in", "textarea", false));
+      // image and/or mask surface whenever not wired (SPEC-io). The app's combined brush widget
+      // captures both at once when neither is wired; the library derives two plain image inputs —
+      // dropping the mask half would make such graphs un-runnable (the sink needs a mask, and
+      // "n.mask" wouldn't even resolve as an input key).
       const imgFed = fed(n.id, "image"), maskFed = fed(n.id, "mask");
-      if (!imgFed) entries.push(mk(n, "image", maskFed ? "Image" : "Image — brush the area to repaint", "image", false));
-      else if (!maskFed) entries.push(mk(n, "mask", "Mask (white = repaint)", "image", false));
+      if (!imgFed) entries.push(mk(n, "image", maskFed ? "Image" : "Image — the picture to repaint", "image", false));
+      if (!maskFed) entries.push(mk(n, "mask", "Mask (white = repaint)", "image", false));
       continue;
     }
     if (n.type === "choice") {

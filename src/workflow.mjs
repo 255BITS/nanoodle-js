@@ -27,7 +27,8 @@ export class RunResult {
 
   /** Output lookup by friendly key or node id (case-insensitive). */
   get(key) {
-    if (key in this.outputs) return this.outputs[key];
+    // own-key check: `in` would leak Object.prototype members (get("toString") → a function)
+    if (Object.hasOwn(this.outputs, key)) return this.outputs[key];
     const norm = String(key).trim().toLowerCase();
     for (const k of Object.keys(this.outputs)) {
       if (k.toLowerCase() === norm) return this.outputs[k];
@@ -130,16 +131,21 @@ export class Workflow {
     // effective fields: graph fields + settings overrides + user inputs
     const effFields = new Map(graph.nodes.map((n) => [n.id, { ...n.fields }]));
     for (const { entry, value } of settingAssignments) {
-      effFields.get(entry.nodeId)[entry.field] = value;
+      effFields.get(entry.nodeId)[entry.field] = this._coerceSetting(entry, value);
     }
+    const explicit = new Set();
     for (const { entry, value } of inputAssignments) {
       effFields.get(entry.nodeId)[entry.field] = this._coerceInput(entry, value);
+      explicit.add(entry);
     }
     // defaults + required check
     for (const entry of this.inputs) {
       const fields = effFields.get(entry.nodeId);
       const v = fields[entry.field];
       if (v == null || String(v).trim() === "") {
+        // an EXPLICIT empty value clears an optional input (e.g. run with no system prompt) —
+        // the def only backfills when the key wasn't supplied at all (the app's prefilled textarea)
+        if (entry.optional && explicit.has(entry)) continue;
         if (entry.def != null && String(entry.def) !== "") fields[entry.field] = entry.def;
         else if (!entry.optional) {
           throw new NanoodleError(`missing required input "${entry.key}" (${entry.nodeId}.${entry.field})`);
@@ -187,6 +193,7 @@ export class Workflow {
         video: (model, prompt, opts, imageDataUrl) => this.client.video(model, prompt, opts, imageDataUrl, io),
         audio: (model, input, extra) => this.client.audio(model, input, extra, io),
         transcribe: (model, audioUrl, language) => this.client.transcribe(model, audioUrl, language, io),
+        fetchMedia: (url) => this.client.fetchMediaDataUrl(url, io),
       };
     };
 
@@ -203,7 +210,9 @@ export class Workflow {
           catch { if (!upstreamFail) upstreamFail = displayName(byId.get(l.from.node)); continue; }
           const v = srcOut[l.from.port];
           if (isInputPort(n, l.to.port)) inp[l.to.port] = v;
-          else fields = { ...fields, [l.to.port]: v }; // wired textarea port = field override
+          // wired textarea port = field override; a missing upstream port (degraded save) must
+          // NOT clobber the typed field with undefined — the app only applies v != null
+          else if (v != null) fields = { ...fields, [l.to.port]: v };
         }
         if (upstreamFail) throw new NanoodleError("upstream failed: " + upstreamFail);
         emit({ type: "node-start", nodeId: n.id, name: displayName(n) });
@@ -277,6 +286,16 @@ export class Workflow {
       throw new NanoodleError(`input "${entry.key}" expects text — got ${Array.isArray(value) ? "an array" : "an object"}`);
     }
     return value == null ? value : String(value);
+  }
+
+  _coerceSetting(entry, value) {
+    // settings come from DOM inputs in the app, so runners assume strings — coerce scalars
+    // (numbers/booleans) the same way instead of crashing a runner mid-run
+    if (value == null) return value;
+    if (typeof value === "object" && !(value instanceof String)) {
+      throw new NanoodleError(`setting "${entry.key}" expects a scalar — got ${Array.isArray(value) ? "an array" : "an object"}`);
+    }
+    return String(value);
   }
 
   _wrapValue(value, portType) {

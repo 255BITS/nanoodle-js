@@ -36,9 +36,16 @@ function promptOf(n, inp, errMsg) {
   return p;
 }
 
-/** Wired audio data: URL → OpenAI-style inline input_audio part (base64 body, no data: prefix). */
+/**
+ * Wired audio data: URL → OpenAI-style inline input_audio part (base64 body, no data: prefix).
+ * Callers must inline https URLs first (ctx.fetchMedia) — the spec mandates base64 bytes, and
+ * shipping a raw URL string as "base64 data" makes a paid call with garbage audio.
+ */
 function audioInputPart(url) {
   if (typeof url !== "string" || !url) return null;
+  if (!/^data:/i.test(url)) {
+    throw new NanoodleError("audio input must be a data: URL — download the clip and inline it before building the chat part");
+  }
   if (url.length > MEDIA_INLINE_MAX) {
     throw new NanoodleError("audio clip is too large to inline (~4 MB send limit) — use a shorter clip");
   }
@@ -62,14 +69,130 @@ function llmOpts(n) {
   return o;
 }
 
-/** Per-call image extras: fixed seed (when numeric) + custom-civitai AIR. */
+/* ---------- LoRA (image/video style adapters) — verbatim behavior from the app runtime ----------
+   HuggingFace + any direct .safetensors URL; the URL is forwarded to NanoGPT and pulled
+   server-side. CivitAI links are signed/login-gated, so we reject them with guidance BEFORE
+   the paid call instead of eating a charged 422. */
+function normalizeLoraUrl(raw) {
+  let u = String(raw || "").trim();
+  if (!u) return "";
+  if (/\b(civitai\.com|civitai\.red|civit\.ai)\b/i.test(u)) {
+    throw new NanoodleError("CivitAI links can't be fetched directly — download the .safetensors and re-host it (e.g. on HuggingFace), then paste that URL.");
+  }
+  if (/(^|\/\/|\.)huggingface\.co\//i.test(u)) {
+    u = u.replace("/blob/", "/resolve/");
+    if (!/\/resolve\/.+\.safetensors(\?|$)/i.test(u)) {
+      throw new NanoodleError("Link the .safetensors file on HuggingFace: open it and use Copy download link (…/resolve/main/your-lora.safetensors).");
+    }
+    return u;
+  }
+  if (/^[\w.-]+\/[\w.-]+$/.test(u)) {
+    throw new NanoodleError("That looks like a HuggingFace repo id — open the .safetensors file and copy its download link (…/resolve/main/your-lora.safetensors).");
+  }
+  if (!/^https?:\/\//i.test(u)) {
+    throw new NanoodleError("LoRA must be a direct https URL to a .safetensors file (HuggingFace or any host).");
+  }
+  return u;
+}
+
+function loraFamily(model) {
+  const m = String(model || "");
+  if (/spicy/i.test(m)) return null;
+  if (/p-image/i.test(m)) return "pimage";
+  if (/klein/i.test(m)) return "flux2klein";
+  if (/flux-2/i.test(m)) return "flux2dev";
+  if (/z-image/i.test(m)) return "zimage";
+  if (/ltx/i.test(m)) return "ltx";
+  if (/lora/i.test(m)) return "flux";
+  return null;
+}
+
+function loraKind(type) { return (type === "image" || type === "edit" || type === "inpaint") ? "image" : "video"; }
+
+function imageTakesLora(id) {
+  id = String(id || "");
+  if (/inpaint/i.test(id)) return false;
+  if (/klein/i.test(id)) return true;
+  return /(^|[-\/])lora($|[-\/])/i.test(id);
+}
+
+// name-based check (video by family, image by allow-list) — the editor already gated LoRA
+// input to truly lora-capable models, so this stays in lockstep without a live catalog
+function modelTakesLora(kind, id) {
+  if (!id || loraFamily(id) == null) return false;
+  return kind === "video" ? true : imageTakesLora(id);
+}
+
+function loraCap(model) {
+  switch (loraFamily(model)) {
+    case "flux2dev": return 4;
+    case "flux2klein": case "zimage": case "ltx": return 3;
+    default: return 1; // flux-lora, pimage — single slot
+  }
+}
+
+function nodeLoras(n) {
+  if (Array.isArray(n.fields.loras)) return n.fields.loras;
+  if ((n.fields.loraUrl || "").trim() || (n.fields.loraStrength || "") !== "") {
+    return [{ url: n.fields.loraUrl || "", strength: n.fields.loraStrength || "" }]; // legacy single-slot fields
+  }
+  return [];
+}
+
+function loraBodyFor(model, items) {
+  const fam = loraFamily(model), sc = (v) => (isNaN(v) ? 1 : v);
+  if (fam === "pimage") return { lora_weights: items[0].url, lora_scale: sc(items[0].scale) };
+  if (fam === "flux2dev" || fam === "flux2klein" || fam === "zimage" || fam === "ltx") {
+    const b = {};
+    items.forEach((it, i) => { b["lora_url_" + (i + 1)] = it.url; b["lora_scale_" + (i + 1)] = sc(it.scale); });
+    return b;
+  }
+  if (items.length === 1) return { lora_url: items[0].url, lora_strength: sc(items[0].scale) };
+  return { loras: items.map((it) => ({ path: it.url, scale: sc(it.scale) })) };
+}
+
+/** LoRA body params for a node (SPEC-engine "+ LoRA params"): {} when the model takes none. */
+export function loraParams(n) {
+  if (!modelTakesLora(loraKind(n.type), n.fields.model)) return {};
+  const rows = nodeLoras(n).filter((r) => r && (r.url || "").trim());
+  if (!rows.length) return {};
+  const items = rows.slice(0, loraCap(n.fields.model)).map((r) => ({
+    url: normalizeLoraUrl(r.url),
+    scale: (r.strength == null || r.strength === "") ? 1 : Number(r.strength),
+  }));
+  return loraBodyFor(n.fields.model, items);
+}
+
+/* ---------- custom-civitai AIR normalization/validation (pre-charge, mirrors the app) ---------- */
+function normalizeCustomCivitaiAir(raw) {
+  const s = String(raw || "").trim();
+  if (!s) return "";
+  if (/^civitai:\d+@\d+/i.test(s)) return s.replace(/^civitai:/i, "civitai:");
+  if (/^persona:\d+@\d+/i.test(s)) return s.replace(/^persona:/i, "persona:");
+  if (/^runware:[^\s@]+@[^\s@]+$/i.test(s)) return s.replace(/^runware:/i, "runware:");
+  const bare = /^(\d+)@(\d+)$/.exec(s);
+  if (bare) return "civitai:" + bare[1] + "@" + bare[2];
+  const mid = /civitai\.com\/models\/(\d+)/i.exec(s);
+  const vid = /[?&]modelVersionId=(\d+)/i.exec(s);
+  if (mid && vid) return "civitai:" + mid[1] + "@" + vid[1];
+  return s;
+}
+
+function isValidCustomAir(air) {
+  return /^(civitai:\d+@\d+|persona:\d+@\d+|runware:[^\s@]+@[^\s@]+)$/i.test(air);
+}
+
+/** Per-call image extras: LoRA params + fixed seed (when numeric) + custom-civitai AIR. */
 function imgExtra(n) {
-  const e = {};
+  const e = loraParams(n);
   const s = n.fields.seed;
   if (s != null && String(s).trim() !== "" && !isNaN(Number(s))) e.seed = Number(s);
   if (n.fields.model === "custom-civitai") {
-    const air = String(n.fields.customCivitaiAir || "").trim();
-    if (!air) throw new NanoodleError("select a CivitAI model — use AIR format civitai:modelId@versionId");
+    const air = normalizeCustomCivitaiAir(n.fields.customCivitaiAir);
+    if (!air) throw new NanoodleError("select a CivitAI model — pick a preset or paste an AIR (civitai:/runware:/persona:…)");
+    if (!isValidCustomAir(air)) {
+      throw new NanoodleError("AIR must look like civitai:MODEL@VERSION, runware:id@rev, or persona:MODEL@VERSION");
+    }
     e.customCivitaiAir = air;
   }
   return e;
@@ -122,6 +245,16 @@ function audioParams(n) {
   if ((f.extraJson || "").trim()) {
     try { Object.assign(body, JSON.parse(f.extraJson)); }
     catch { throw new NanoodleError("advanced params: invalid JSON in extraJson"); }
+  }
+  // Re-enforce the surface-one-track contract AFTER extraJson (twin of the app runtime): advanced
+  // params can reintroduce number_of_songs / generation_count / n and bill N songs while the runner
+  // only keeps the single returned URL. Drop every song-count key (omit = one track at the model
+  // default). remix shares the extraJson escape hatch and surfaces one URL too — same clamp.
+  if (n.type === "music" || n.type === "remix") {
+    for (const k of Object.keys(body)) {
+      if (/^(number_of_songs|n|num_songs|song_count|generation_count|generation_count_parameter)$/i.test(k)
+        || /generation_count|num_?songs|song_?count/i.test(k)) delete body[k];
+    }
   }
   return body;
 }
@@ -185,7 +318,10 @@ export const RUNNERS = {
   async llm(n, inp, ctx) {
     const prompt = promptOf(n, inp, "no prompt");
     const imgs = collectPorts(inp, IMG_PORT_RE);
-    const audioPart = inp.audio ? audioInputPart(inp.audio) : null;
+    // hosted audio (music/tts nodes return https CDN URLs verbatim) → download + inline as base64:
+    // the chat input_audio part carries bytes, never a URL
+    const audioSrc = inp.audio && /^https?:/i.test(inp.audio) ? await ctx.fetchMedia(inp.audio) : inp.audio;
+    const audioPart = audioSrc ? audioInputPart(audioSrc) : null;
     const messages = chatMessages(n, prompt, imgs, audioPart);
     return { text: await ctx.chat(messages, mdl(n), llmOpts(n)) };
   },
@@ -244,7 +380,7 @@ export const RUNNERS = {
 
   async tvideo(n, inp, ctx) {
     const prompt = promptOf(n, inp, "no prompt");
-    const opts = { ...videoDims(n), extra: n.fields.modelOpts || {} };
+    const opts = { ...videoDims(n), lora: loraParams(n), extra: n.fields.modelOpts || {} };
     const refs = collectPorts(inp, REF_PORT_RE);
     if (refs.length) { opts.refImages = refs; opts.refKey = "reference_images"; }
     return { video: await ctx.video(mdl(n), prompt, opts, null) };
@@ -253,7 +389,7 @@ export const RUNNERS = {
   async ivideo(n, inp, ctx) {
     if (!inp.image) throw new NanoodleError("no image input");
     const prompt = promptOf(n, inp);
-    const opts = { ...videoDims(n), extra: n.fields.modelOpts || {} };
+    const opts = { ...videoDims(n), lora: loraParams(n), extra: n.fields.modelOpts || {} };
     if (inp.endframe) opts.last_image = inp.endframe;
     return { video: await ctx.video(mdl(n), prompt, opts, inp.image) };
   },
@@ -261,7 +397,7 @@ export const RUNNERS = {
   async vedit(n, inp, ctx) {
     if (!inp.video) throw new NanoodleError("no video input");
     const prompt = promptOf(n, inp);
-    const opts = { ...videoSourceOpts(inp.video), ...videoDims(n), extra: n.fields.modelOpts || {} };
+    const opts = { ...videoSourceOpts(inp.video), ...videoDims(n), lora: loraParams(n), extra: n.fields.modelOpts || {} };
     return { video: await ctx.video(mdl(n), prompt, opts, null) };
   },
 

@@ -52,14 +52,20 @@ async function main() {
 
   let graphPath = null, outDir = null, asJson = false, apiKey = process.env.NANOGPT_API_KEY, timeoutMs;
   const inputArgs = [], setArgs = [];
-  for (let i = 0; i < argv.length; i++) {
+  let i = 0;
+  const val = (flag) => { // a value-taking flag at end of argv is a usage error, not a TypeError
+    const v = argv[++i];
+    if (v === undefined) { console.error(`${flag} expects a value`); usage(); }
+    return v;
+  };
+  for (; i < argv.length; i++) {
     const a = argv[i];
-    if (a === "--input") inputArgs.push(argv[++i]);
-    else if (a === "--set") setArgs.push(argv[++i]);
-    else if (a === "--out") outDir = argv[++i];
+    if (a === "--input") inputArgs.push(val("--input"));
+    else if (a === "--set") setArgs.push(val("--set"));
+    else if (a === "--out") outDir = val("--out");
     else if (a === "--json") asJson = true;
-    else if (a === "--key") apiKey = argv[++i];
-    else if (a === "--timeout") timeoutMs = +argv[++i];
+    else if (a === "--key") apiKey = val("--key");
+    else if (a === "--timeout") timeoutMs = +val("--timeout");
     else if (a.startsWith("-")) { console.error("unknown flag: " + a); usage(); }
     else if (!graphPath) graphPath = a;
     else { console.error("unexpected argument: " + a); usage(); }
