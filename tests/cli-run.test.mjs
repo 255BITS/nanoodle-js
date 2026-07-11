@@ -119,7 +119,7 @@ test("CLI contract: a failed sink exits 1 but still emits the JSON summary with 
   assert.ok(summary.errors.length >= 1, "summary.errors must name the failure");
 });
 
-test("CLI contract: --help exits 0 and reads like docs (runnable examples, default out dir, share-URL TODO)", async () => {
+test("CLI contract: --help exits 0 and reads like docs (runnable examples, default out dir, share URLs)", async () => {
   const r = await runCli(["--help"]);
   assert.equal(r.status, 0);
   assert.match(r.stdout, /examples:/);
@@ -127,7 +127,16 @@ test("CLI contract: --help exits 0 and reads like docs (runnable examples, defau
   assert.match(r.stdout, /nanoodle init && nanoodle inspect/);
   assert.match(r.stdout, /noodle-out/);
   assert.match(r.stdout, /NANOGPT_API_KEY/);
-  assert.match(r.stdout, /Share URLs .* not accepted yet/);
+  assert.match(r.stdout, /<graph\.json\|share-url>/);          // share links are first-class now
+  assert.match(r.stdout, /nanoodle\.com\/#g=/);                // …with a paste-a-link example
+});
+
+test("CLI: inspect accepts an editor-minted share URL, fully offline", async () => {
+  const golden = JSON.parse(await readFile(join(here, "fixtures", "share", "g-starter.json"), "utf8"));
+  const r = await runCli(["inspect", golden.url]);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /Inputs:/);
+  assert.match(r.stdout, /Nodes:/);
 });
 
 test("CLI: init scaffolds the exact starter-graph fixture and never overwrites", async () => {
