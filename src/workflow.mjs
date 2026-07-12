@@ -5,6 +5,7 @@ import { deriveInputs, deriveOutputs, deriveSettings, resolveInputKey, resolveSe
 import { NanoClient } from "./client.mjs";
 import { MediaRef, coerceMediaInput } from "./media.mjs";
 import { RUNNERS, unsupportedNodeError } from "./nodes.mjs";
+import { decodeShareUrl, isShareRef } from "./share.mjs";
 
 const MEDIA_KINDS = new Set(["image", "audio", "video", "inpaint"]);
 
@@ -71,9 +72,19 @@ export class Workflow {
     }
   }
 
-  /** Load a downloaded noodle-graph.json save from disk. */
-  static async load(path, opts = {}) {
-    return Workflow.fromJSON(await readFile(path, "utf8"), opts);
+  /**
+   * Load a workflow from a noodle-graph.json file on disk, or from any nanoodle
+   * share link — a full URL (nanoodle.com/#g=…, /play.html#a=…, a da.gd/TinyURL
+   * short link) or a bare #g=/#j=/#a= fragment. Direct fragment links decode
+   * offline; only fragment-less short links touch the network (redirect-header
+   * reads, no credentials attached).
+   */
+  static async load(src, opts = {}) {
+    if (isShareRef(src)) {
+      const { graph } = await decodeShareUrl(src, { fetch: opts.fetch });
+      return new Workflow(graph, opts);
+    }
+    return Workflow.fromJSON(await readFile(src, "utf8"), opts);
   }
 
   /** Build from a parsed object or a JSON string. */

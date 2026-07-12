@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 /**
- * nanoodle CLI — run and inspect noodle-graph.json workflows.
+ * nanoodle CLI — run and inspect noodle-graph.json workflows and share links.
  *
  *   nanoodle run graph.json --input Text="a cozy ramen shop" --out ./noodle-out
+ *   nanoodle run "https://nanoodle.com/#g=..."
  *   nanoodle inspect graph.json
  *   nanoodle init [path]
  *
@@ -22,8 +23,8 @@ import { MediaRef, extForMime } from "../src/media.mjs";
 const HELP = `nanoodle — run nanoodle.com visual AI workflows from the terminal
 
 usage:
-  nanoodle run <graph.json> [--input k=v]... [--set k=v]... [--out dir] [--json] [--key K] [--env-file path] [--timeout ms]
-  nanoodle inspect <graph.json>
+  nanoodle run <graph.json|share-url> [--input k=v]... [--set k=v]... [--out dir] [--json] [--key K] [--env-file path] [--timeout ms]
+  nanoodle inspect <graph.json|share-url>
   nanoodle init [path]
   nanoodle --help | --version
 
@@ -54,8 +55,13 @@ examples:
   # feed a file into a wired field, override a setting, pick the output dir
   nanoodle run graph.json --input n2.system=@style.txt --set n3.size=1k --out ./renders
 
-Graphs are the noodle-graph.json files saved from the https://nanoodle.com editor (💾).
-Share URLs (nanoodle.com/#g=...) are not accepted yet — export the JSON from the editor for now.
+  # any nanoodle share link is runnable — paste it straight from a README or chat
+  nanoodle inspect "https://nanoodle.com/#g=..."
+  nanoodle run "https://nanoodle.com/play.html#a=..." --input Text="hello"
+
+Graphs are the noodle-graph.json files saved from the https://nanoodle.com editor (💾),
+or any share link (#g=/#j=/#a= URLs, including da.gd/TinyURL short links) — quote it;
+# starts a comment in most shells. Direct links decode offline; only short links fetch.
 Exit codes: 0 success, 1 failure. The API key is never logged.`;
 
 function usage(code = 1) {

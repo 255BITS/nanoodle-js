@@ -39,6 +39,8 @@ npx nanoodle --help      # or run the CLI without installing
 import { Workflow } from "nanoodle";
 
 const wf = await Workflow.load("noodle-graph.json");           // key from NANOGPT_API_KEY
+// …or load any nanoodle share link — the URL is the package:
+// const wf = await Workflow.load("https://nanoodle.com/#g=…");
 const result = await wf.run({ Text: "a cozy ramen shop on a rainy night" });
 await result.get("Image").save("ramen.png");                   // media: MediaRef (url + bytes()/save())
 console.log(result.costUsd, result.remainingBalance);
@@ -74,8 +76,20 @@ progress lines to stderr; exit code `0` on success, `1` on failure.
 - `--json` — quiet mode: skip the stderr progress lines (the JSON summary is printed either way)
 - `--env-file path` — load `NANOGPT_API_KEY` from a `.env`-style file (`--key` wins if both are set)
 
-Share URLs (`nanoodle.com/#g=...`) aren’t accepted yet — export the graph as
-JSON from the editor for now.
+### The URL is the package
+
+Every nanoodle share link is a runnable artifact — paste one straight from a
+README, a chat, or a tweet, wherever a `graph.json` path is accepted:
+
+```bash
+npx nanoodle inspect "https://nanoodle.com/#g=..."                       # what does it need? (offline)
+npx nanoodle run "https://nanoodle.com/play.html#a=..." --input Text=hi  # run it
+```
+
+Workflow links (`#g=`/`#j=`) and app links (`#a=`, graph only — the app shell
+stays in the browser) both work, as do da.gd/TinyURL short links (resolved by
+reading redirect headers; no credentials are ever sent). Direct links decode
+fully offline. Quote the URL — `#` starts a comment in most shells.
 
 ## Inputs, outputs, settings
 
