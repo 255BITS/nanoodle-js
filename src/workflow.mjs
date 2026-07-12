@@ -47,7 +47,7 @@ function isPlainObject(v) {
 export class Workflow {
   /**
    * @param {object} graphData parsed noodle-graph.json
-   * @param {{ apiKey?, baseUrl?, fetch?, pollIntervals?, timeouts?, quiet? }} [opts]
+   * @param {{ apiKey?, payment?, baseUrl?, fetch?, pollIntervals?, timeouts?, quiet? }} [opts]
    */
   constructor(graphData, opts = {}) {
     const { nodes, links, warnings } = materialize(graphData);
@@ -60,6 +60,7 @@ export class Workflow {
       fetch: opts.fetch,
       pollIntervals: opts.pollIntervals,
       timeouts: opts.timeouts,
+      payment: opts.payment, // accountless x402: a callback that sends the Nano invoice (never a seed)
     });
     /** [{ key, nodeId, field, kind, label, optional, def, options? }] */
     this.inputs = deriveInputs(this.graph);
@@ -164,9 +165,9 @@ export class Workflow {
       }
     }
 
-    // API key required only when the graph actually calls NanoGPT
-    if (!this.client.apiKey && graph.nodes.some((n) => NODE_TYPES[n.type].network)) {
-      throw new NanoodleError("no API key — pass { apiKey } to Workflow.load/fromJSON or set NANOGPT_API_KEY (this workflow calls the NanoGPT API)");
+    // API key (or an x402 payment callback) required only when the graph actually calls NanoGPT
+    if (!this.client.apiKey && !this.client.payment && graph.nodes.some((n) => NODE_TYPES[n.type].network)) {
+      throw new NanoodleError("no API key — pass { apiKey } to Workflow.load/fromJSON, set NANOGPT_API_KEY, or pass { payment } for accountless x402 runs (this workflow calls the NanoGPT API)");
     }
 
     // ---- execution ----

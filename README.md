@@ -184,6 +184,34 @@ A price of `0` means known-included (subscription), not unknown. `inspect`
 and loading/validating workflows never call the API. No telemetry, no
 analytics; the API key is never logged.
 
+## No account at all: pay per run in Nano (x402)
+
+NanoGPT supports [x402](https://nano-gpt.com) accountless payments: call the
+API with no key, get an HTTP 402 invoice, settle it in Nano (XNO — instant,
+feeless), and the call completes. nanoodle wires that up end to end:
+
+```bash
+# each paid call prints a scannable QR + nano: URI on stderr and waits for the deposit
+nanoodle run "https://nanoodle.com/#g=..." --input Text="hello" --pay
+```
+
+```js
+const wf = await Workflow.load(url, {
+  payment: async (invoice) => {
+    // invoice: { payTo, amountRaw, amount, amountUsd, uri, expiresAt, explorerUrl, ... }
+    await myWallet.send(invoice.payTo, invoice.amountRaw); // YOUR signer does the send
+  },
+});
+```
+
+The library **never touches funds or keys**: `payment` must be a callback —
+passing a seed or private key throws. Do the send inside the callback with
+your own wallet/signer (e.g. a self-custody wallet, or print `invoice.uri`
+for a human to scan — `qrTerminal(invoice.uri)` is exported). Each API call
+pays at most once; graphs with several paid nodes produce one small invoice
+per node. Chat and image nodes are live-verified; async video/audio job
+polling under accountless mode is untested upstream.
+
 ## Specs and testing
 
 Format and execution semantics live in [docs/](docs/):
