@@ -135,19 +135,18 @@ const result = await wf.run(
 `run()` rejects with `RunError` when an output (sink) node fails —
 `err.result` still has partial results, per-node statuses, and cost so far.
 Failures in lanes no output depends on only appear in `result.errors`.
-Unknown/unsupported node types, missing required inputs, bad keys, and a
-missing API key all fail **before** anything is spent.
+Unknown node types, missing required inputs, bad keys, and a missing API key
+all fail **before** anything is spent.
 
 ## Supported nodes
 
 | runs | node types |
 |---|---|
 | local | text, upload (image/audio/video), choice, join, comment |
+| local media† | resize, vframes, combine, soundtrack, trim, extractaudio |
 | NanoGPT | llm (incl. vision + audio input), image, draw, edit, inpaint*, vision, tvideo, ivideo, vedit, lipsync, music, remix, tts, transcribe |
-| **not supported** (browser-only media processing) | resize, vframes, combine, soundtrack, trim, extractaudio |
 
-Workflows with unsupported node types load with a warning and fail fast at
-`run()` with `UnsupportedNodeError` — before any network call.
+† **local media** needs **ffmpeg** on `PATH` (soft dependency — not an npm package). Same behaviour as the browser app; clear error if ffmpeg is missing.
 
 \* **inpaint:** the browser app composites the mask onto black at the source
 pixel size; this library passes your mask through verbatim. Supply a
@@ -211,6 +210,9 @@ for a human to scan — `qrTerminal(invoice.uri)` is exported). Each API call
 pays at most once; graphs with several paid nodes produce one small invoice
 per node. Chat and image nodes are live-verified; async video/audio job
 polling under accountless mode is untested upstream.
+
+Copy-paste scripts (CLI, QR callback, wallet stub, bare chat):
+[examples/x402/](examples/x402/).
 
 ### Accountless image, start to finish
 

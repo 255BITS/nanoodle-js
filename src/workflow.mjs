@@ -4,7 +4,7 @@ import { NODE_TYPES, displayName, isInputPort, materialize, topoSort } from "./g
 import { deriveInputs, deriveOutputs, deriveSettings, resolveInputKey, resolveSettingKey } from "./io.mjs";
 import { NanoClient } from "./client.mjs";
 import { MediaRef, coerceMediaInput } from "./media.mjs";
-import { RUNNERS, unsupportedNodeError } from "./nodes.mjs";
+import { RUNNERS } from "./nodes.mjs";
 import { decodeShareUrl, isShareRef } from "./share.mjs";
 
 const MEDIA_KINDS = new Set(["image", "audio", "video", "inpaint"]);
@@ -128,14 +128,13 @@ export class Workflow {
       settingAssignments.push({ entry, value });
     }
 
-    // unsupported / unknown node types fail fast — before any network call
+    // unknown node types fail fast — before any network call
     for (const n of graph.nodes) {
       if (n.unknown) {
         throw new UnsupportedNodeError(
           `node ${n.id}: unknown node type '${n.type}' — this graph needs a newer nanoodle library`,
           { nodeId: n.id, nodeType: n.type });
       }
-      if (NODE_TYPES[n.type].unsupported) throw unsupportedNodeError(n);
     }
 
     const order = topoSort(graph); // throws naming cyclic nodes

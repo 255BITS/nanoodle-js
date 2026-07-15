@@ -1,14 +1,10 @@
-import { NanoodleError, UnsupportedNodeError } from "./errors.mjs";
-import { IMG_PORT_RE, EDIT_IMG_RE, REF_PORT_RE, displayName } from "./graph.mjs";
+import { NanoodleError } from "./errors.mjs";
+import { IMG_PORT_RE, EDIT_IMG_RE, REF_PORT_RE, CLIP_PORT_RE, VID_PORT_RE } from "./graph.mjs";
 import { MEDIA_INLINE_MAX } from "./media.mjs";
-
-/** Message for browser-only media nodes (exact wording is part of the contract). */
-export function unsupportedNodeError(node) {
-  return new UnsupportedNodeError(
-    `node "${displayName(node)}" (${node.id}): node type '${node.type}' does local media processing that requires ` +
-    "the nanoodle browser app; not supported by this library yet",
-    { nodeId: node.id, nodeType: node.type });
-}
+import {
+  resizeCropImage, trimAudioToWav, extractAudioToWav,
+  extractVideoFrames, concatVideos, muxSoundtrack,
+} from "./local-media.mjs";
 
 function mdl(n) {
   const m = String((n.fields && n.fields.model) || "").trim();
@@ -313,6 +309,58 @@ export const RUNNERS = {
   async join(n, inp) {
     const sep = (n.fields.sep != null ? n.fields.sep : " ").replace(/\\n/g, "\n");
     return { text: [inp.a, inp.b].filter((v) => v != null && v !== "").join(sep) };
+  },
+
+  // ---- local media (ffmpeg on PATH; soft dependency, not an npm package) ----
+
+  async resize(n, inp) {
+    if (!inp.image) throw new NanoodleError("no image input");
+    return {
+      image: await resizeCropImage(inp.image, n.fields.mode || "fit", n.fields.width, n.fields.height),
+    };
+  },
+
+  async vframes(n, inp) {
+    if (!inp.video) throw new NanoodleError("no video input");
+    return extractVideoFrames(inp.video, {
+      count: n.fields.frames,
+      gap: n.fields.gap,
+      dir: n.fields.dir || "end",
+    });
+  },
+
+  async combine(n, inp) {
+    // browser uses vid1.. / clip1.. families; accept either (CLIP first when both present)
+    const clips = [
+      ...collectPorts(inp, CLIP_PORT_RE),
+      ...collectPorts(inp, VID_PORT_RE),
+    ].filter((v, i, a) => v && a.indexOf(v) === i);
+    if (clips.length < 2) throw new NanoodleError("wire at least two clips to combine");
+    const dedup = n.fields.dedup == null ? true
+      : !(n.fields.dedup === false || n.fields.dedup === "false" || n.fields.dedup === 0 || n.fields.dedup === "0");
+    return { video: await concatVideos(clips, dedup) };
+  },
+
+  async soundtrack(n, inp) {
+    if (!inp.video) throw new NanoodleError("no video input");
+    if (!inp.audio) throw new NanoodleError("no audio input");
+    const loop = n.fields.loop === true || n.fields.loop === "true" || n.fields.loop === 1 || n.fields.loop === "1";
+    return { video: await muxSoundtrack(inp.video, inp.audio, loop) };
+  },
+
+  async trim(n, inp) {
+    if (!inp.audio) throw new NanoodleError("no audio input");
+    const start = parseFloat(n.fields.start) || 0;
+    const length = parseFloat(n.fields.length);
+    return { audio: await trimAudioToWav(inp.audio, start, Number.isFinite(length) ? length : 30, 16000) };
+  },
+
+  async extractaudio(n, inp) {
+    if (!inp.video) throw new NanoodleError("no video input");
+    const start = parseFloat(n.fields.start) || 0;
+    const lenRaw = parseFloat(n.fields.length);
+    const length = (Number.isFinite(lenRaw) && lenRaw > 0) ? lenRaw : 0;
+    return { audio: await extractAudioToWav(inp.video, start, length, 16000) };
   },
 
   async llm(n, inp, ctx) {
