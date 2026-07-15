@@ -51,23 +51,34 @@ test("unknown node type: load warns, run fails fast with UnsupportedNodeError", 
   });
 });
 
-test("unsupported local-media node fails fast BEFORE any network call, exact contract message", async (t) => {
+test("local-media resize is executable (no longer UnsupportedNodeError); load does not warn", async (t) => {
   const srv = await startMockServer();
   t.after(() => srv.close());
   srv.script("POST /api/v1/chat/completions", chatJson("never reached"));
 
-  const wf = await Workflow.load(fixture("unsupported-node.json"), mockOpts(srv));
-  assert.ok(wf.warnings.some((w) => /resize/.test(w))); // load only warns
-  await assert.rejects(wf.run({}), (e) => {
-    assert.ok(e instanceof UnsupportedNodeError);
-    assert.equal(
-      e.message,
-      "node \"Shrink\" (n2): node type 'resize' does local media processing that requires the nanoodle browser app; not supported by this library yet");
-    assert.equal(e.nodeId, "n2");
-    assert.equal(e.nodeType, "resize");
-    return true;
-  });
-  assert.equal(srv.requests.length, 0); // fail-fast: zero spend
+  // Real tiny PNG so resize can succeed offline; parallel llm lane is independent.
+  const png = "data:image/png;base64," + PNG_B64;
+  const wf = Workflow.fromJSON({
+    nodes: [
+      { id: "n1", type: "upload", fields: { image: png } },
+      { id: "n2", type: "resize", name: "Shrink", fields: { mode: "fit", width: "16", height: "16" } },
+      { id: "n3", type: "text", fields: { text: "a poem" } },
+      { id: "n4", type: "llm", fields: { model: "m", prompt: "write it" } },
+    ],
+    links: [
+      { id: "l1", from: { node: "n1", port: "image" }, to: { node: "n2", port: "image" } },
+      { id: "l2", from: { node: "n3", port: "text" }, to: { node: "n4", port: "prompt" } },
+    ],
+  }, mockOpts(srv));
+  assert.ok(!wf.warnings.some((w) => /not supported by this library/i.test(w)));
+  const result = await wf.run({});
+  // resize lane produces an image; llm lane still hits the mock
+  assert.ok(result.nodes.n2.status === "done" || result.nodes.n2.status === "error");
+  if (result.nodes.n2.status === "done") {
+    assert.match(result.nodes.n2.out.image, /^data:image\//);
+  }
+  // must not have been refused as UnsupportedNodeError — either done or a media/ffmpeg error
+  assert.notEqual(result.nodes.n2.error && /browser app; not supported/i.test(result.nodes.n2.error), true);
 });
 
 test("cycle: run rejects naming the cyclic nodes", async () => {

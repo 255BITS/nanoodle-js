@@ -1,19 +1,24 @@
-import { NanoodleError, UnsupportedNodeError } from "./errors.mjs";
-import { IMG_PORT_RE, EDIT_IMG_RE, REF_PORT_RE, displayName } from "./graph.mjs";
+import { NanoodleError } from "./errors.mjs";
+import { IMG_PORT_RE, EDIT_IMG_RE, REF_PORT_RE, CLIP_PORT_RE, VID_PORT_RE } from "./graph.mjs";
 import { MEDIA_INLINE_MAX } from "./media.mjs";
-
-/** Message for browser-only media nodes (exact wording is part of the contract). */
-export function unsupportedNodeError(node) {
-  return new UnsupportedNodeError(
-    `node "${displayName(node)}" (${node.id}): node type '${node.type}' does local media processing that requires ` +
-    "the nanoodle browser app; not supported by this library yet",
-    { nodeId: node.id, nodeType: node.type });
-}
+import {
+  resizeCropImage, trimAudioToWav, extractAudioToWav,
+  extractVideoFrames, concatVideos, muxSoundtrack,
+} from "./local-media.mjs";
 
 function mdl(n) {
   const m = String((n.fields && n.fields.model) || "").trim();
   if (!m) throw new NanoodleError(`pick a model first (node ${n.id})`);
   return m; // model strings pass through VERBATIM — endpoint choice is by node TYPE
+}
+
+/** Local-media opts from the workflow ctx (custom fetch + AbortSignal). */
+function mediaOpts(ctx) {
+  if (!ctx) return {};
+  return {
+    ...(ctx.fetch ? { fetch: ctx.fetch } : {}),
+    ...(ctx.signal ? { signal: ctx.signal } : {}),
+  };
 }
 
 function portIdx(name) {
@@ -313,6 +318,72 @@ export const RUNNERS = {
   async join(n, inp) {
     const sep = (n.fields.sep != null ? n.fields.sep : " ").replace(/\\n/g, "\n");
     return { text: [inp.a, inp.b].filter((v) => v != null && v !== "").join(sep) };
+  },
+
+  // ---- local media (pure-JS first like the browser; ffmpeg soft fallback) ----
+
+  async resize(n, inp, ctx) {
+    if (!inp.image) throw new NanoodleError("no image input");
+    const media = mediaOpts(ctx);
+    return {
+      image: await resizeCropImage(inp.image, n.fields.mode || "fit", n.fields.width, n.fields.height, media),
+    };
+  },
+
+  async vframes(n, inp, ctx) {
+    if (!inp.video) throw new NanoodleError("no video input");
+    const media = mediaOpts(ctx);
+    return extractVideoFrames(inp.video, {
+      count: n.fields.frames,
+      gap: n.fields.gap,
+      dir: n.fields.dir || "end",
+      ...media,
+      onProgress: ctx && ctx.progress,
+    });
+  },
+
+  async combine(n, inp, ctx) {
+    // Browser wires vid1..; some docs/saves use clip1.. — accept both, ordered by port number
+    // (not CLIP-then-VID, which reorders mixed graphs).
+    const keys = Object.keys(inp)
+      .filter((k) => CLIP_PORT_RE.test(k) || VID_PORT_RE.test(k))
+      .sort((a, b) => portIdx(a) - portIdx(b) || a.localeCompare(b));
+    const clips = [];
+    const seen = new Set();
+    for (const k of keys) {
+      const v = inp[k];
+      if (!v || seen.has(v)) continue;
+      seen.add(v);
+      clips.push(v);
+    }
+    if (clips.length < 2) throw new NanoodleError("wire at least two clips to combine");
+    const dedup = n.fields.dedup == null ? true
+      : !(n.fields.dedup === false || n.fields.dedup === "false" || n.fields.dedup === 0 || n.fields.dedup === "0");
+    const media = mediaOpts(ctx);
+    return { video: await concatVideos(clips, dedup, { ...media, onProgress: ctx && ctx.progress }) };
+  },
+
+  async soundtrack(n, inp, ctx) {
+    if (!inp.video) throw new NanoodleError("no video input");
+    if (!inp.audio) throw new NanoodleError("no audio input");
+    const loop = n.fields.loop === true || n.fields.loop === "true" || n.fields.loop === 1 || n.fields.loop === "1";
+    const media = mediaOpts(ctx);
+    return { video: await muxSoundtrack(inp.video, inp.audio, loop, { ...media, onProgress: ctx && ctx.progress }) };
+  },
+
+  async trim(n, inp, ctx) {
+    if (!inp.audio) throw new NanoodleError("no audio input");
+    const start = parseFloat(n.fields.start) || 0;
+    const length = parseFloat(n.fields.length);
+    return { audio: await trimAudioToWav(inp.audio, start, Number.isFinite(length) ? length : 30, 16000, mediaOpts(ctx)) };
+  },
+
+  async extractaudio(n, inp, ctx) {
+    if (!inp.video) throw new NanoodleError("no video input");
+    const start = parseFloat(n.fields.start) || 0;
+    const lenRaw = parseFloat(n.fields.length);
+    const length = (Number.isFinite(lenRaw) && lenRaw > 0) ? lenRaw : 0;
+    return { audio: await extractAudioToWav(inp.video, start, length, 16000, mediaOpts(ctx)) };
   },
 
   async llm(n, inp, ctx) {

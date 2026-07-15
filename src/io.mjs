@@ -1,5 +1,5 @@
 import { NanoodleError } from "./errors.mjs";
-import { NODE_TYPES, displayName, topoSort } from "./graph.mjs";
+import { NODE_TYPES, displayName, topoSort, wiredFramesFloor, MAX_FRAMES } from "./graph.mjs";
 
 /* ============================== INPUTS ============================== */
 
@@ -152,7 +152,16 @@ export function deriveOutputs(graph) {
     const count = (used.get(lower) || 0) + 1;
     used.set(lower, count);
     if (count > 1) key = key + " " + count;
-    return { key, nodeId: n.id, type: n.type, ports: NODE_TYPES[n.type].outputs.map((p) => ({ ...p })) };
+    const t = NODE_TYPES[n.type];
+    let ports = t.outputs.map((p) => ({ ...p }));
+    // vframes grows frame1..frameN from max(fields.frames, wired floor) (mirrors browser)
+    if (n.type === "vframes") {
+      const authored = Math.max(1, Math.min(MAX_FRAMES, parseInt(n.fields && n.fields.frames, 10) || 1));
+      const count = Math.max(authored, wiredFramesFloor(graph, n.id));
+      ports = [];
+      for (let i = 1; i <= count; i++) ports.push({ name: "frame" + i, type: "image" });
+    }
+    return { key, nodeId: n.id, type: n.type, ports };
   });
 }
 
@@ -244,6 +253,31 @@ export const SETTING_SPECS = {
     { f: "size", label: "Image size", kind: "select", options: SIZES, def: "1024x1024" },
     { f: "seed", label: "Seed", kind: "number" },
   ],
+  // local media knobs (play.html SETTING_SPECS) — shape-affecting fields for vframes/combine
+  resize: [
+    { f: "mode", label: "Mode", kind: "select", options: ["fit", "fill", "exact"], def: "fit" },
+    { f: "width", label: "Width", kind: "number" },
+    { f: "height", label: "Height", kind: "number" },
+  ],
+  vframes: [
+    { f: "dir", label: "Start from", kind: "select", options: ["end", "start"], def: "end" },
+    { f: "frames", label: "Frames", kind: "number", def: "1", min: 1, max: 12 },
+    { f: "gap", label: "Gap (s)", kind: "number", def: "0.5" },
+  ],
+  combine: [
+    { f: "dedup", label: "Trim duplicate seam frame", kind: "boolean", def: true },
+  ],
+  soundtrack: [
+    { f: "loop", label: "Loop audio to fill video", kind: "boolean", def: false },
+  ],
+  trim: [
+    { f: "start", label: "Start (s)", kind: "number", def: "0" },
+    { f: "length", label: "Length (s)", kind: "number", def: "30" },
+  ],
+  extractaudio: [
+    { f: "start", label: "Start (s)", kind: "number", def: "0" },
+    { f: "length", label: "Length (s)", kind: "number" },
+  ],
 };
 
 /**
@@ -259,10 +293,16 @@ export function deriveSettings(graph) {
     for (const s of specs) {
       if (graph.links.some((l) => l.to.node === n.id && l.to.port === s.f)) continue; // wired knob is decided upstream
       const cur = n.fields[s.f];
+      // vframes frames is shape-affecting — never offer a floor below the highest wired frameK
+      const min = (n.type === "vframes" && s.f === "frames")
+        ? Math.max(s.min || 1, wiredFramesFloor(graph, n.id))
+        : s.min;
       out.push({
         key: `${n.id}.${s.f}`, nodeId: n.id, field: s.f, kind: s.kind, label: s.label,
         def: cur != null && String(cur) !== "" ? cur : s.def,
         ...(s.options ? { options: [...s.options] } : {}),
+        ...(min != null ? { min } : {}),
+        ...(s.max != null ? { max: s.max } : {}),
         title: displayName(n),
       });
     }
