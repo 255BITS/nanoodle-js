@@ -1,5 +1,6 @@
 import { NanoodleError } from "./errors.mjs";
 import { b64ImageMime, bytesToDataUrl, dataUrlBytes, MEDIA_INLINE_MAX } from "./media.mjs";
+import { assertPaymentOption, parseNanoInvoice, looksLikeResult } from "./x402.mjs";
 
 const AUDIO_MIME = { mp3: "audio/mpeg", opus: "audio/ogg", aac: "audio/aac", flac: "audio/flac", wav: "audio/wav", pcm: "audio/wav" };
 
@@ -75,29 +76,97 @@ export function sleep(ms, signal) {
  * pollIntervals / timeouts are per-media-kind knobs (ms).
  */
 export class NanoClient {
-  constructor({ apiKey, baseUrl = "https://nano-gpt.com", fetch = globalThis.fetch, pollIntervals = {}, timeouts = {} } = {}) {
+  constructor({ apiKey, baseUrl = "https://nano-gpt.com", fetch = globalThis.fetch, pollIntervals = {}, timeouts = {}, payment } = {}) {
     // non-enumerable: console.log/util.inspect/JSON.stringify of a client (or a Workflow holding
     // one) must never print the key
     Object.defineProperty(this, "apiKey", { value: apiKey, writable: true, enumerable: false, configurable: true });
+    assertPaymentOption(payment); // a callback or nothing — never a seed/private key
+    this.payment = payment || null;
     this.baseUrl = String(baseUrl).replace(/\/+$/, "");
     this.fetch = fetch;
-    this.pollIntervals = { video: 5000, audio: 3000, ...pollIntervals };
+    this.pollIntervals = { video: 5000, audio: 3000, x402: 3000, ...pollIntervals };
     this.timeouts = { video: 600000, audio: 300000, ...timeouts };
   }
 
-  _auth() { return { Authorization: "Bearer " + this.apiKey, "x-api-key": this.apiKey }; }
+  _auth() {
+    if (this.apiKey) return { Authorization: "Bearer " + this.apiKey, "x-api-key": this.apiKey };
+    if (this.payment) return { "x-x402": "true" }; // keyless: opt into accountless 402 invoices
+    return {};
+  }
+
+  /**
+   * fetch that settles HTTP 402 via the x402 flow when running keyless with a
+   * `payment` callback: parse the Nano invoice → callback sends XNO (its own
+   * wallet/signer — the library never touches funds) → poll the complete URL
+   * until the deposit is seen → return the replayed result, or re-send the
+   * original request stamped with the settled payment id. Each API call pays
+   * at most once; a second 402 after settling is an error, never a second send.
+   */
+  async _paidFetch(url, init, signal) {
+    const r = await this.fetch(url, init);
+    if (r.status !== 402 || !this.payment || this.apiKey) return r;
+    const settled = await this._settle402(r, signal);
+    if (settled.response) return settled.response; // complete replayed the stored request
+    const r2 = await this.fetch(url, { ...init, headers: { ...init.headers, "x-x402-payment-id": settled.paymentId } });
+    if (r2.status === 402) {
+      throw new NanoodleError(
+        "payment " + settled.paymentId + " settled, but the API still answered 402 on retry — " +
+        "check " + (settled.statusUrl || "the payment status") + " before paying again",
+        { code: "x402", status: 402, paymentId: settled.paymentId });
+    }
+    return r2;
+  }
+
+  async _settle402(r, signal) {
+    let body = null;
+    try { body = await r.json(); } catch { /* fall through to the generic funds error */ }
+    const invoice = body && parseNanoInvoice(body, this.baseUrl);
+    if (!invoice || !invoice.paymentId || !invoice.completeUrl) {
+      throw new NanoodleError(
+        "payment required, but the 402 response offered no usable Nano option" +
+        (body ? " — " + JSON.stringify(body).slice(0, 200) : ""), { code: "x402", status: 402 });
+    }
+    await this.payment(invoice); // ← the callback does the actual XNO send
+    // The complete endpoint doubles as the poll: 402 = not seen on-chain yet.
+    const deadline = invoice.expiresAt || Date.now() + 15 * 60 * 1000;
+    while (true) {
+      const cr = await this.fetch(invoice.completeUrl, {
+        method: "POST", headers: { "Content-Type": "application/json", "x-x402": "true" }, body: "{}", signal,
+      });
+      if (cr.ok) {
+        const ct = ((cr.headers && cr.headers.get && cr.headers.get("content-type")) || "");
+        let cj = null;
+        if (ct.includes("json")) { try { cj = await cr.json(); } catch { /* treat as settle-only */ } }
+        if (looksLikeResult(cj)) {
+          // wrap so call sites keep their Response contract (ok/json/text/headers)
+          const response = { ok: true, status: 200, headers: cr.headers, json: async () => cj, text: async () => JSON.stringify(cj) };
+          return { paymentId: invoice.paymentId, statusUrl: invoice.statusUrl, response };
+        }
+        return { paymentId: invoice.paymentId, statusUrl: invoice.statusUrl };
+      }
+      if (cr.status !== 402) throw httpError(cr.status, await cr.text());
+      await cr.text().catch(() => {}); // drain the "not verified yet" body
+      if (Date.now() >= deadline) {
+        throw new NanoodleError(
+          "payment window expired before the Nano deposit was detected (payment " + invoice.paymentId + ", " +
+          (invoice.amount || invoice.amountRaw) + " to " + invoice.payTo + ") — if you already sent it, check " +
+          (invoice.explorerUrl || invoice.statusUrl), { code: "x402-expired", paymentId: invoice.paymentId });
+      }
+      await sleep(this.pollIntervals.x402, signal);
+    }
+  }
 
   async _postJson(path, body, signal) {
     const payload = JSON.stringify(body);
     if (payload.length > MEDIA_INLINE_MAX) {
       throw new NanoodleError("request body is too large (~4 MB max) — nanoodle sends media inline as base64; use smaller/shorter media");
     }
-    return this.fetch(this.baseUrl + path, {
+    return this._paidFetch(this.baseUrl + path, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...this._auth() },
       body: payload,
       signal,
-    });
+    }, signal);
   }
 
   async _get(path, signal) {
@@ -288,7 +357,7 @@ export class NanoClient {
     fd.append("model", model);
     if (language) fd.append("language", language);
     // no explicit Content-Type — fetch sets the multipart boundary
-    const r = await this.fetch(this.baseUrl + "/api/v1/audio/transcriptions", { method: "POST", headers: this._auth(), body: fd, signal });
+    const r = await this._paidFetch(this.baseUrl + "/api/v1/audio/transcriptions", { method: "POST", headers: this._auth(), body: fd, signal }, signal);
     if (!r.ok) throw httpError(r.status, await r.text());
     const j = await r.json();
     if (onCost) onCost(costWithHeaders(j, r));

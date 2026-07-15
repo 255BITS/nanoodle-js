@@ -42,6 +42,9 @@ flags:
                 (the JSON run summary is always printed to stdout either way)
   --key K       NanoGPT API key (defaults to NANOGPT_API_KEY)
   --env-file p  read NANOGPT_API_KEY from a .env-style file (--key wins if both given)
+  --pay         accountless run — no API key or account: each paid call prints a Nano (XNO)
+                invoice as a scannable QR + nano: URI on stderr and waits for the deposit
+                (x402; ignores any configured key; self-custody wallet does the send)
   --timeout ms  overall run timeout
 
 examples:
@@ -58,6 +61,9 @@ examples:
   # any nanoodle share link is runnable — paste it straight from a README or chat
   nanoodle inspect "https://nanoodle.com/#g=..."
   nanoodle run "https://nanoodle.com/play.html#a=..." --input Text="hello"
+
+  # no account at all: pay per run in Nano — scan the QR that appears in the terminal
+  nanoodle run "https://nanoodle.com/#g=..." --input Text="hello" --pay
 
 Graphs are the noodle-graph.json files saved from the https://nanoodle.com editor (💾),
 or any share link (#g=/#j=/#a= URLs, including da.gd/TinyURL short links) — quote it;
@@ -114,7 +120,7 @@ then: NANOGPT_API_KEY=... nanoodle run ${dest} --input Text="your idea"`);
 
   if (cmd !== "run" && cmd !== "inspect") usage();
 
-  let graphPath = null, outDir = null, quiet = false, keyFlag = null, envFile = null, timeoutMs;
+  let graphPath = null, outDir = null, quiet = false, keyFlag = null, envFile = null, timeoutMs, pay = false;
   const inputArgs = [], setArgs = [];
   let i = 0;
   const val = (flag) => { // a value-taking flag at end of argv is a usage error, not a TypeError
@@ -130,6 +136,7 @@ then: NANOGPT_API_KEY=... nanoodle run ${dest} --input Text="your idea"`);
     else if (a === "--json") quiet = true;
     else if (a === "--key") keyFlag = val("--key");
     else if (a === "--env-file") envFile = val("--env-file");
+    else if (a === "--pay") pay = true;
     else if (a === "--timeout") timeoutMs = +val("--timeout");
     else if (a.startsWith("-")) { console.error("unknown flag: " + a); usage(); }
     else if (!graphPath) graphPath = a;
@@ -148,7 +155,26 @@ then: NANOGPT_API_KEY=... nanoodle run ${dest} --input Text="your idea"`);
     apiKey = m[1].trim();
   }
 
-  const wf = await Workflow.load(graphPath, { apiKey, baseUrl: process.env.NANOGPT_BASE_URL || undefined });
+  // --pay = accountless x402: the key (flag or env) is deliberately ignored, each paid call
+  // prints a Nano invoice on stderr and the run resumes once the deposit is seen on-chain.
+  // The send happens in the user's own wallet — the CLI never asks for a seed or key.
+  let payment;
+  if (pay) {
+    apiKey = null; // null, not undefined — undefined would let Workflow's NANOGPT_API_KEY env fallback re-inject a key
+    const { qrTerminal } = await import("../src/qr.mjs");
+    payment = async (inv) => {
+      const mins = inv.expiresAt ? Math.max(1, Math.round((inv.expiresAt - Date.now()) / 60000)) : null;
+      console.error(`\n⚡ payment required: ${inv.amount || inv.amountRaw + " raw"}${inv.amountUsd != null ? ` (~$${inv.amountUsd})` : ""}`);
+      console.error(qrTerminal(inv.uri));
+      console.error("scan with your Nano wallet (dark terminals scan best), or send to:");
+      console.error("  " + inv.payTo);
+      console.error("  " + inv.uri);
+      if (inv.explorerUrl) console.error("  explorer: " + inv.explorerUrl);
+      console.error(`waiting for the deposit…${mins ? ` (invoice expires in ~${mins} min,` : " ("}Ctrl-C aborts)\n`);
+    };
+  }
+
+  const wf = await Workflow.load(graphPath, { apiKey, payment, baseUrl: process.env.NANOGPT_BASE_URL || undefined });
 
   if (cmd === "inspect") {
     const pad = (s, n) => String(s).padEnd(n);
