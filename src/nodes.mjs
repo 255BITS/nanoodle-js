@@ -497,7 +497,9 @@ export const RUNNERS = {
     if (!rawMask) throw new NanoodleError("no mask — supply a B/W mask (white = repaint)");
     const prompt = promptOf(n, inp, "no prompt — say what to paint into the masked area");
     // Match play.html maskToSource: composite mask onto black at the source's pixel size.
-    const mask = await maskToSource(rawMask, source, mediaOpts(ctx));
+    // ctx.maskToSource lets a browser host inject its canvas compositor (handles JPEG/WebP
+    // sources the pure-PNG path can't, where ffmpeg isn't an option).
+    const mask = await (ctx.maskToSource || maskToSource)(rawMask, source, mediaOpts(ctx));
     return { image: await ctx.image({ prompt, model: mdl(n), size: n.fields.size || "1024x1024", imageDataUrl: source, maskDataUrl: mask, extra: imgExtra(n) }) };
   },
 
