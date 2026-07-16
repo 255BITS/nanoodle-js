@@ -25,7 +25,7 @@ result.errors                // [] of { nodeId, name, message }
 - run() REJECTS with RunError when any SINK node failed (RunError carries .result with partials). Non-sink failure that no sink depends on → warning in result.errors only. (A failed non-sink makes its downstream sinks fail with "upstream failed: <name>" — so effectively any failure that matters rejects.)
 - Media values: class MediaRef { url (data: or https), mime?, async bytes(), async save(path), toString() → url }. Text outputs are plain strings. Inputs accept: string (text), data: URL, https URL, Buffer/Uint8Array (+ mime option via {data, mime}), or local file path via Workflow helpers (mediaFromFile(path)).
 - onProgress(evt): { type: "node-start"|"node-done"|"node-error"|"poll", nodeId, name, ... }.
-- Constructor opts: { apiKey = process.env.NANOGPT_API_KEY, baseUrl = "https://nano-gpt.com", fetch = globalThis.fetch, pollIntervals, timeouts } — injectable fetch/baseUrl is what the test harness uses.
+- Constructor opts: { apiKey = process.env.NANOGPT_API_KEY, baseUrl = "https://nano-gpt.com", fetch = globalThis.fetch, pollIntervals, timeouts, catalog } — injectable fetch/baseUrl is what the test harness uses.
 
 CLI (bin/nanoodle.mjs, "nanoodle" bin entry):
 ```

@@ -75,11 +75,15 @@ function isPlainObject(v) {
 export class Workflow {
   /**
    * @param {object} graphData parsed noodle-graph.json
-   * @param {{ apiKey?, payment?, baseUrl?, fetch?, pollIntervals?, timeouts?, quiet? }} [opts]
+   * @param {{ apiKey?, payment?, baseUrl?, fetch?, pollIntervals?, timeouts?, quiet?, catalog? }} [opts]
+   *   catalog: opt-in raw model-catalog arrays ({ chat, image, video, audio }) enabling
+   *   the same payload gates play RUNTIME_JS applies (see src/catalog.mjs) — data only,
+   *   never fetched by the library
    */
   constructor(graphData, opts = {}) {
     const { nodes, links, warnings } = materialize(graphData);
     this.graph = { nodes, links };
+    this.catalog = opts.catalog || null;
     /** Load-time warnings (unknown / unsupported node types). load() only warns; run() fails fast. */
     this.warnings = warnings;
     this.client = new NanoClient({
@@ -261,6 +265,7 @@ export class Workflow {
         // local media (resize/combine/…) — same fetch + signal as network I/O
         fetch: mediaFetch,
         signal: ac.signal,
+        catalog: this.catalog,
         progress: (msg) => emit({ type: "node-progress", nodeId: node.id, name: displayName(node), message: msg }),
       };
     };
