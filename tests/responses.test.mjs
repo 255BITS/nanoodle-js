@@ -8,14 +8,17 @@ const llmWf = (srv, fields = {}) => Workflow.fromJSON({
   links: [],
 }, mockOpts(srv));
 
-test("chat parse: content null → 'no text in response'; empty string too", async (t) => {
+test("chat parse: content null → 'no text in response'; empty string is a billed-but-empty reply, not an error", async (t) => {
   const srv = await startMockServer();
   t.after(() => srv.close());
   srv.script("POST /api/v1/chat/completions", { json: { choices: [{ message: { content: null } }] } });
   await assert.rejects(llmWf(srv).run({}), /no text in response/);
 
+  // dual-engine parity: the editor/play built-in parsers throw only on null — an empty string is
+  // a real (billed) reply and must flow through, not poison dependents as a node error
   srv.script("POST /api/v1/chat/completions", { json: { choices: [{ message: { content: "" } }] } });
-  await assert.rejects(llmWf(srv).run({}), /no text in response/);
+  const empty = await llmWf(srv).run({});
+  assert.equal(empty.get("LLM"), "");
 });
 
 test("chat parse: array content joins its .text parts", async (t) => {
