@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { Workflow } from "../src/index.mjs";
+import { encodeWavMono } from "../src/local-media.mjs";
 import { startMockServer, mockOpts, PNG_B64, PNG_DATA_URL, WAV_DATA_URL } from "./harness/mock-server.mjs";
 
 const fixture = (name) => fileURLToPath(new URL("./fixtures/" + name, import.meta.url));
@@ -319,6 +320,66 @@ test("lipsync: image + local audio → imageDataUrl + audioDataUrl", async (t) =
   assert.equal(body.imageDataUrl, PNG_DATA_URL);
   assert.equal(body.audioDataUrl, WAV_DATA_URL);
   assert.ok(!("audioUrl" in body));
+});
+
+// a real 0.2s clip (the shared WAV_DATA_URL fixture has an empty data chunk, which the trimmer
+// rightly refuses to slice)
+const LIPSYNC_WAV = "data:audio/wav;base64,"
+  + Buffer.from(encodeWavMono(new Float32Array(1600).fill(0.1), 8000)).toString("base64");
+
+const LIPSYNC_GRAPH = {
+  nodes: [
+    { id: "n1", type: "upload", fields: { image: PNG_DATA_URL } },
+    { id: "n2", type: "aupload", fields: { audio: LIPSYNC_WAV } },
+    { id: "n3", type: "lipsync", fields: { model: "sonic-avatar", prompt: "" } },
+  ],
+  links: [
+    { id: "l1", from: { node: "n1", port: "image" }, to: { node: "n3", port: "image" } },
+    { id: "l2", from: { node: "n2", port: "audio" }, to: { node: "n3", port: "audio" } },
+  ],
+};
+
+test("lipsync trim-retry: pre-charge duration rejection → trim once to the model's cap and resubmit", async (t) => {
+  const srv = await startMockServer();
+  t.after(() => srv.close());
+  srv.script("POST /api/generate-video", [
+    { status: 400, body: "INVALID_AUDIO_DURATION: this model supports audio up to 30 seconds" },
+    { json: { runId: "vid_r1", cost: 0.4 } },
+  ]);
+  srv.script("GET /api/video/status", { json: { status: "COMPLETED", output: { url: "https://cdn.example/talk.mp4" } } });
+
+  const notes = [];
+  const wf = Workflow.fromJSON(LIPSYNC_GRAPH, mockOpts(srv));
+  const result = await wf.run({}, { onProgress: (e) => { if (e.type === "node-progress") notes.push(e.message); } });
+
+  const submits = srv.of("POST /api/generate-video");
+  assert.equal(submits.length, 2, "exactly one retry");
+  assert.equal(submits[0].json.audioDataUrl, LIPSYNC_WAV, "first attempt sends the clip as-is");
+  assert.ok(/^data:audio\/wav/.test(submits[1].json.audioDataUrl), "retry sends a trimmed mono WAV");
+  assert.notEqual(submits[1].json.audioDataUrl, LIPSYNC_WAV, "retry audio was re-encoded, not resent");
+  assert.ok(notes.some((m) => /trimming audio to 30s/.test(m)), "trim note surfaces the model's cap");
+  assert.equal(result.get("n3").url, "https://cdn.example/talk.mp4");
+});
+
+test("lipsync trim-retry: post-submit job failure is already charged — NEVER resubmits", async (t) => {
+  const srv = await startMockServer();
+  t.after(() => srv.close());
+  srv.script("POST /api/generate-video", { json: { runId: "vid_r2", cost: 0.4 } });
+  srv.script("GET /api/video/status", { json: { data: { status: "FAILED", error: "face not detected" } } });
+
+  const wf = Workflow.fromJSON(LIPSYNC_GRAPH, mockOpts(srv));
+  await assert.rejects(wf.run({}), /video failed: face not detected/);
+  assert.equal(srv.of("POST /api/generate-video").length, 1, "no second submit after a charged failure");
+});
+
+test("lipsync trim-retry: a second pre-charge rejection gives up (one retry only)", async (t) => {
+  const srv = await startMockServer();
+  t.after(() => srv.close());
+  srv.script("POST /api/generate-video", { status: 400, body: "INVALID_AUDIO_DURATION: this model supports audio up to 10 seconds" });
+
+  const wf = Workflow.fromJSON(LIPSYNC_GRAPH, mockOpts(srv));
+  await assert.rejects(wf.run({}), /INVALID_AUDIO_DURATION/);
+  assert.equal(srv.of("POST /api/generate-video").length, 2, "exactly two attempts, then give up");
 });
 
 test("video FAILED status raises with the server error", async (t) => {
