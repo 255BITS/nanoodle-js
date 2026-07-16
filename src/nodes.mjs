@@ -1,4 +1,5 @@
 import { NanoodleError } from "./errors.mjs";
+import { catItem, chatModelCan } from "./catalog.mjs";
 import { IMG_PORT_RE, EDIT_IMG_RE, REF_PORT_RE, CLIP_PORT_RE, VID_PORT_RE } from "./graph.mjs";
 import { MEDIA_INLINE_MAX } from "./media.mjs";
 import {
@@ -203,13 +204,27 @@ function imgExtra(n) {
   return e;
 }
 
-/** Video dims under the standard wire names (no catalog in v1 → no per-model renames). */
-function videoDims(n) {
+/**
+ * Video dims. Standard wire names by default; with a catalog, the chosen model's
+ * declared param names win (aspect → aspect_ratio | orientation | resolution_ratio,
+ * duration → duration | seconds) and blank fields backfill from the catalog default —
+ * mirrors play's videoDimParams so Sora/WAN-style models honour the chosen dims.
+ */
+function videoDims(n, ctx) {
   const out = {};
   const f = n.fields;
+  const m = catItem(ctx && ctx.catalog, "video", f.model);
+  const p = (m && m.supported_parameters && m.supported_parameters.parameters) || {};
+  const aP = p.aspect_ratio || p.orientation || p.resolution_ratio;
+  const aWire = p.aspect_ratio ? "aspect_ratio" : p.orientation ? "orientation" : p.resolution_ratio ? "resolution_ratio" : "aspect_ratio";
+  const dP = p.duration || p.seconds;
+  const dWire = p.duration ? "duration" : p.seconds ? "seconds" : "duration";
+  let asp = f.aspect, dur = f.duration;
+  if ((asp == null || asp === "") && aP && aP.default != null) asp = aP.default;
+  if ((dur == null || dur === "") && dP && dP.default != null) dur = dP.default;
   if (f.resolution != null && f.resolution !== "") out.resolution = f.resolution;
-  if (f.aspect != null && f.aspect !== "") out.aspect_ratio = f.aspect;
-  if (f.duration != null && f.duration !== "") out.duration = f.duration;
+  if (asp != null && asp !== "") out[aWire] = asp;
+  if (dur != null && dur !== "") out[dWire] = dur;
   return out;
 }
 
@@ -225,26 +240,35 @@ const nonEmpty = (v) => v != null && String(v).trim() !== "";
 
 /**
  * Faithful to the app's collectAudioParams: only-when-nonempty, defaults omitted,
- * then fields.extraJson merged verbatim last. (Catalog gating: skipped in v1.)
+ * then fields.extraJson merged verbatim last. With an opt-in catalog, the cat:*
+ * applies gates match play: a param is dropped only when the chosen model is IN
+ * the catalog and doesn't advertise it (duration needs a min/max_duration range;
+ * remix duration additionally needs per-second pricing; tts voice needs a voice
+ * list). No catalog → send-everything fallback, exactly like an offline export.
  */
-function audioParams(n) {
+function audioParams(n, ctx) {
   const f = n.fields, body = {};
   const num = (v) => { const x = Number(v); return isNaN(x) ? null : x; };
+  const m = catItem(ctx && ctx.catalog, "audio", f.model);
+  const sp = (m && m.supported_parameters) || null;
+  const durOk = !sp || (sp.min_duration != null && sp.max_duration != null);                                     // cat:duration
+  const secDurOk = !sp || (sp.min_duration != null && sp.max_duration != null && +((m.pricing || {}).per_second) > 0); // cat:secduration
+  const voiceOk = !sp || (Array.isArray(sp.voices) && sp.voices.length > 0);                                     // cat:voices
   if (n.type === "music") {
     if (nonEmpty(f.lyrics)) body.lyrics = f.lyrics;
     if (f.instrumental === true || f.instrumental === "true") body.instrumental = true;
-    if (nonEmpty(f.duration) && num(f.duration) != null) body.duration = num(f.duration);
+    if (nonEmpty(f.duration) && num(f.duration) != null && durOk) body.duration = num(f.duration);
     if (nonEmpty(f.negative_prompt)) body.negative_prompt = f.negative_prompt;
     if (nonEmpty(f.seed) && num(f.seed) != null) body.seed = num(f.seed);
     if (nonEmpty(f.response_format) && f.response_format !== "mp3") body.response_format = f.response_format;
   } else if (n.type === "tts") {
-    if (nonEmpty(f.voice)) body.voice = f.voice;
+    if (nonEmpty(f.voice) && voiceOk) body.voice = f.voice;
     if (nonEmpty(f.speed) && num(f.speed) != null && num(f.speed) !== 1) body.speed = num(f.speed); // omit when 1
     if (nonEmpty(f.instructions)) body.instructions = f.instructions;
     if (nonEmpty(f.response_format) && f.response_format !== "mp3") body.response_format = f.response_format;
   } else if (n.type === "remix") {
     if (nonEmpty(f.lyrics)) body.lyrics = f.lyrics;
-    if (nonEmpty(f.duration) && num(f.duration) != null) body.duration = num(f.duration);
+    if (nonEmpty(f.duration) && num(f.duration) != null && secDurOk) body.duration = num(f.duration);
     if (nonEmpty(f.response_format) && f.response_format !== "mp3") body.response_format = f.response_format;
   }
   if ((f.extraJson || "").trim()) {
@@ -391,10 +415,22 @@ export const RUNNERS = {
     const imgs = collectPorts(inp, IMG_PORT_RE);
     // hosted audio (music/tts nodes return https CDN URLs verbatim) → download + inline as base64:
     // the chat input_audio part carries bytes, never a URL
-    const audioSrc = inp.audio && /^https?:/i.test(inp.audio) ? await ctx.fetchMedia(inp.audio) : inp.audio;
-    const audioPart = audioSrc ? audioInputPart(audioSrc) : null;
+    let audioPart = null;
+    if (inp.audio) {
+      // a KNOWN text-only model can't hear the (large, still-billed) input_audio part — drop it
+      // and note it; permissive for catalog-absent models (mirrors play's chatModelCan gate)
+      if (chatModelCan(ctx.catalog, mdl(n), "audio_input")) {
+        const audioSrc = /^https?:/i.test(inp.audio) ? await ctx.fetchMedia(inp.audio) : inp.audio;
+        audioPart = audioInputPart(audioSrc);
+      } else {
+        ctx.progress("audio ignored — this model is text-only");
+      }
+    }
     const messages = chatMessages(n, prompt, imgs, audioPart);
-    return { text: await ctx.chat(messages, mdl(n), llmOpts(n)) };
+    // JSON response_format on a non-structured_output model bills but returns empty — strip it
+    const opts = llmOpts(n);
+    if (opts.response_format && !chatModelCan(ctx.catalog, mdl(n), "structured_output")) delete opts.response_format;
+    return { text: await ctx.chat(messages, mdl(n), opts) };
   },
 
   async vision(n, inp, ctx) {
@@ -409,15 +445,30 @@ export const RUNNERS = {
 
   async image(n, inp, ctx) {
     const prompt = promptOf(n, inp, "no prompt");
-    const want = Math.max(1, parseInt(n.fields.variations, 10) || 1);
+    let want = Math.max(1, parseInt(n.fields.variations, 10) || 1);
+    // clamp to the model's real max output (catalog item present but silent → 1, the
+    // conservative default; absent → unclamped) so we never bill for surplus images
+    const catIt = catItem(ctx.catalog, "image", mdl(n));
+    if (catIt) want = Math.min(want, (catIt.supported_parameters && catIt.supported_parameters.max_output_images) || 1);
     const urls = await ctx.image({ prompt, model: mdl(n), size: n.fields.size || "1024x1024", extra: imgExtra(n), n: want, multi: true });
     const sel = Math.min(Math.max(0, parseInt(n.fields.sel, 10) || 0), urls.length - 1);
     return { image: urls[sel], images: urls };
   },
 
   async edit(n, inp, ctx) {
-    const imgs = collectPorts(inp, EDIT_IMG_RE);
+    let imgs = collectPorts(inp, EDIT_IMG_RE);
     if (!imgs.length) throw new NanoodleError("no image input");
+    // cap to the model's max_input_images (item present but silent → 1; absent → no cap):
+    // a baked graph can carry more refs than a later-swapped model composites
+    const m = catItem(ctx.catalog, "image", n.fields.model);
+    if (m) {
+      const mi = m.supported_parameters && m.supported_parameters.max_input_images;
+      const cap = mi > 0 ? mi : 1;
+      if (imgs.length > cap) {
+        ctx.progress(`dropped ${imgs.length - cap} image(s) over this model's limit`);
+        imgs = imgs.slice(0, cap);
+      }
+    }
     const prompt = promptOf(n, inp);
     if (!prompt && !/upscal/i.test(n.fields.model || "")) throw new NanoodleError("no edit instruction");
     guardRefsSize(imgs);
@@ -452,7 +503,7 @@ export const RUNNERS = {
 
   async tvideo(n, inp, ctx) {
     const prompt = promptOf(n, inp, "no prompt");
-    const opts = { ...videoDims(n), lora: loraParams(n), extra: n.fields.modelOpts || {} };
+    const opts = { ...videoDims(n, ctx), lora: loraParams(n), extra: n.fields.modelOpts || {} };
     const refs = collectPorts(inp, REF_PORT_RE);
     if (refs.length) { opts.refImages = refs; opts.refKey = "reference_images"; }
     return { video: await ctx.video(mdl(n), prompt, opts, null) };
@@ -461,7 +512,7 @@ export const RUNNERS = {
   async ivideo(n, inp, ctx) {
     if (!inp.image) throw new NanoodleError("no image input");
     const prompt = promptOf(n, inp);
-    const opts = { ...videoDims(n), lora: loraParams(n), extra: n.fields.modelOpts || {} };
+    const opts = { ...videoDims(n, ctx), lora: loraParams(n), extra: n.fields.modelOpts || {} };
     if (inp.endframe) opts.last_image = inp.endframe;
     return { video: await ctx.video(mdl(n), prompt, opts, inp.image) };
   },
@@ -469,7 +520,7 @@ export const RUNNERS = {
   async vedit(n, inp, ctx) {
     if (!inp.video) throw new NanoodleError("no video input");
     const prompt = promptOf(n, inp);
-    const opts = { ...videoSourceOpts(inp.video), ...videoDims(n), lora: loraParams(n), extra: n.fields.modelOpts || {} };
+    const opts = { ...videoSourceOpts(inp.video), ...videoDims(n, ctx), lora: loraParams(n), extra: n.fields.modelOpts || {} };
     return { video: await ctx.video(mdl(n), prompt, opts, null) };
   },
 
@@ -477,24 +528,24 @@ export const RUNNERS = {
     if (!inp.image) throw new NanoodleError("no image input");
     if (!inp.audio) throw new NanoodleError("no audio input");
     const prompt = promptOf(n, inp);
-    const opts = { ...audioSourceOpts(inp.audio), ...videoDims(n), extra: n.fields.modelOpts || {} };
+    const opts = { ...audioSourceOpts(inp.audio), ...videoDims(n, ctx), extra: n.fields.modelOpts || {} };
     return { video: await ctx.video(mdl(n), prompt, opts, inp.image) };
   },
 
   async music(n, inp, ctx) {
     const text = promptOf(n, inp, "no prompt — describe the track");
-    return { audio: await ctx.audio(mdl(n), text, audioParams(n)) };
+    return { audio: await ctx.audio(mdl(n), text, audioParams(n, ctx)) };
   },
 
   async tts(n, inp, ctx) {
     const text = promptOf(n, inp, "no text — give the Speech node something to say");
-    return { audio: await ctx.audio(mdl(n), text, audioParams(n)) };
+    return { audio: await ctx.audio(mdl(n), text, audioParams(n, ctx)) };
   },
 
   async remix(n, inp, ctx) {
     if (!inp.audio) throw new NanoodleError("no audio — wire a source track into the audio port");
     const text = promptOf(n, inp, "no prompt — describe the cover / extension first");
-    const params = audioParams(n);
+    const params = audioParams(n, ctx);
     // https source rides as-is (providers take hosted URLs); local data: is inlined
     if (/^https?:/i.test(inp.audio)) params.audio = inp.audio;
     else {

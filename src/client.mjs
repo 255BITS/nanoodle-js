@@ -238,6 +238,10 @@ export class NanoClient {
     if (opts.duration) body.duration = opts.duration;
     if (opts.aspect_ratio) body.aspect_ratio = opts.aspect_ratio;
     if (opts.resolution) body.resolution = opts.resolution;
+    // catalog-declared wire names (videoDims with an opt-in catalog): Sora-style seconds/orientation
+    if (opts.seconds) body.seconds = opts.seconds;
+    if (opts.orientation) body.orientation = opts.orientation;
+    if (opts.resolution_ratio) body.resolution_ratio = opts.resolution_ratio;
     if (imageDataUrl) body.imageDataUrl = imageDataUrl;
     if (opts.last_image) body.last_image = opts.last_image;
     if (opts.videoUrl) body.videoUrl = opts.videoUrl;
@@ -250,6 +254,9 @@ export class NanoClient {
     if (opts.duration) body.duration = opts.duration;
     if (opts.aspect_ratio) body.aspect_ratio = opts.aspect_ratio;
     if (opts.resolution) body.resolution = opts.resolution;
+    if (opts.seconds) body.seconds = opts.seconds;
+    if (opts.orientation) body.orientation = opts.orientation;
+    if (opts.resolution_ratio) body.resolution_ratio = opts.resolution_ratio;
     if (opts.refImages && opts.refImages.length) body[opts.refKey || "reference_images"] = opts.refImages; // wired refs win last
     const r = await this._postJson("/api/generate-video", body, signal);
     if (!r.ok) throw httpError(r.status, await r.text());
