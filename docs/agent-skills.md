@@ -46,8 +46,8 @@ my-skill/
 agents only need the folder somewhere they can read `SKILL.md` and run commands
 (`.agents/skills/`, `~/.grok/skills/`, etc.).
 
-**Via the open skills CLI** (multi-agent install into `~/.agents/skills/` and vendor
-symlinks):
+**Via the open [`skills` CLI](https://www.npmjs.com/package/skills)** (multi-agent install
+into `~/.agents/skills/` and vendor symlinks):
 
 ```sh
 npx skills add nanoodlecom/nanoodle-js@poster-generator -g -y

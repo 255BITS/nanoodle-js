@@ -9,6 +9,19 @@ Zero runtime dependencies. Library + CLI in one install.
 
 Looking for Python? → **[nanoodle-py](https://github.com/nanoodlecom/nanoodle-py)**
 
+## Which repo do I want?
+
+| I want to… | Go to |
+|---|---|
+| Design workflows in the browser | [nanoodle.com](https://nanoodle.com) |
+| Run graphs from Node code or the CLI | **this package** |
+| Run graphs from Python | [nanoodle-py](https://github.com/nanoodlecom/nanoodle-py) |
+| Serve saved graphs as MCP tools | [nanoodle-mcp](https://github.com/nanoodlecom/nanoodle-mcp) |
+| Run graphs in GitHub Actions CI | [run-noodle-action](https://github.com/nanoodlecom/run-noodle-action) |
+| Teach an agent to *build* graphs | [nanoodle-skill](https://github.com/nanoodlecom/nanoodle-skill) |
+| Prebuilt one-task agent skills | [noodle-skills](https://github.com/nanoodlecom/noodle-skills) |
+| Browse ready-to-open graphs | [awesome-noodles](https://github.com/nanoodlecom/awesome-noodles) |
+
 ## At a glance
 
 ![Pipeline: nanoodle editor → noodle-graph.json → JS executor → NanoGPT API](docs/diagram-pipeline.jpg)
@@ -32,6 +45,10 @@ agents.
 npm install nanoodle     # library + CLI
 npx nanoodle --help      # or run the CLI without installing
 ```
+
+Latest on npm is **0.2.0**; accountless `--pay` (x402) and the local-media
+nodes below need 0.4 — until it ships, install from this repo
+(`npm install github:nanoodlecom/nanoodle-js`).
 
 ## Quickstart (library)
 
@@ -73,6 +90,7 @@ progress lines to stderr; exit code `0` on success, `1` on failure.
 - `--input k=@path` — read a file (media as media; `.txt` / `.md` / `.json` as text)
 - `--set k=v` — override a setting (`n3.model=flux-pro`)
 - `--out dir` — where media outputs land (default `./noodle-out`)
+- `--timeout ms` — overall run timeout
 - `--json` — quiet mode: skip the stderr progress lines (the JSON summary is printed either way)
 - `--env-file path` — load `NANOGPT_API_KEY` from a `.env`-style file (`--key` wins if both are set)
 
@@ -146,7 +164,7 @@ all fail **before** anything is spent.
 | local media† | resize, vframes, combine, soundtrack, trim, extractaudio |
 | NanoGPT | llm (incl. vision + audio input), image, draw, edit, inpaint*, vision, tvideo, ivideo, vedit, lipsync, music, remix, tts, transcribe |
 
-† **local media** prefers a pure-JS path that matches the browser (lossless mp4 remux, PCM-WAV trim, PNG resize). **ffmpeg** on `PATH` is the fallback for everything else (soft dependency — not an npm package); clear error if it’s required and missing.
+† **local media** (0.4, unreleased — see [Install](#install)) prefers a pure-JS path that matches the browser (lossless mp4 remux, PCM-WAV trim, PNG resize). **ffmpeg** on `PATH` is the fallback for everything else (soft dependency — not an npm package); clear error if it’s required and missing.
 
 \* **inpaint:** the mask is composited onto black at the source image’s pixel
 size before send (same as the browser app) — white = repaint, black = keep.
@@ -158,7 +176,8 @@ A saved workflow plus a short `SKILL.md` playbook is a skill any coding agent
 can run — Claude Code, Cursor, Grok, or anything that reads markdown and runs
 shell. Recipe and template: [docs/agent-skills.md](docs/agent-skills.md).
 
-**Example skill** (idea → LLM prompt → poster image):
+**Example skill** (idea → LLM prompt → poster image), installed with the
+[`skills` CLI](https://www.npmjs.com/package/skills):
 
 ```bash
 npx skills add nanoodlecom/nanoodle-js@poster-generator -g -y
@@ -183,7 +202,7 @@ A price of `0` means known-included (subscription), not unknown. `inspect`
 and loading/validating workflows never call the API. No telemetry, no
 analytics; the API key is never logged.
 
-## No account at all: pay per run in Nano (x402)
+## No account at all: pay per run in Nano (x402) — 0.4, unreleased
 
 NanoGPT supports [x402](https://nano-gpt.com) accountless payments: call the
 API with no key, get an HTTP 402 invoice, settle it in Nano (XNO — instant,
