@@ -969,3 +969,6 @@ export async function muxSoundtrack(videoUrl, audioUrl, loop = false, { fetch: f
 }
 
 export { MAX_FRAMES, MAX_IMAGE_DIM, MP4CAT };
+// PNG codec internals — used by the nanoodle repo's dual-engine parity harness
+// (pixel-level mask comparison + headless canvas shim). Not part of the stable API.
+export { decodePng, encodePngRgba };

@@ -133,11 +133,14 @@ export class Workflow {
    * Execute the whole graph.
    * @param {object|string|Uint8Array|MediaRef} inputs friendly-keyed values, or a bare scalar
    *   when the workflow has exactly one required input
-   * @param {{ settings?, timeoutMs?, signal?, onProgress? }} [runOpts]
+   * @param {{ settings?, defaults?, timeoutMs?, signal?, onProgress? }} [runOpts]
+   *   defaults: false treats graph fields as authoritative — no def backfill for
+   *   unsupplied inputs (the play UI materializes defs into fields itself, so a
+   *   deliberately blank field must stay blank when it delegates to this engine)
    * @returns {Promise<RunResult>} rejects with RunError (carrying .result) when a sink failed
    */
   async run(inputs = {}, runOpts = {}) {
-    const { settings = {}, timeoutMs, signal, onProgress } = runOpts;
+    const { settings = {}, defaults = true, timeoutMs, signal, onProgress } = runOpts;
     const graph = this.graph;
 
     // bare scalar → the single required input
@@ -205,8 +208,8 @@ export class Workflow {
       if (v == null || String(v).trim() === "") {
         // an EXPLICIT empty value clears an optional input (e.g. run with no system prompt) —
         // the def only backfills when the key wasn't supplied at all (the app's prefilled textarea)
-        if (entry.optional && explicit.has(entry)) continue;
-        if (entry.def != null && String(entry.def) !== "") fields[entry.field] = entry.def;
+        if (entry.optional && (explicit.has(entry) || !defaults)) continue;
+        if (defaults && entry.def != null && String(entry.def) !== "") fields[entry.field] = entry.def;
         else if (!entry.optional) {
           throw new NanoodleError(`missing required input "${entry.key}" (${entry.nodeId}.${entry.field})`);
         }
