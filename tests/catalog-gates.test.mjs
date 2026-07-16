@@ -124,6 +124,58 @@ test("music/remix duration + tts voice gate on catalog supported_parameters", as
   assert.equal(srv.requests[3].json.voice, "nova");
 });
 
+test("video refs: catalog resolves the model's real wire key + cap; a known no-ref model ignores wires", async (t) => {
+  const srv = await startMockServer();
+  t.after(() => srv.close());
+  const done = { json: { data: { status: "COMPLETED", output: { video: { url: "https://cdn.example/v.mp4" } } } } };
+  for (let i = 0; i < 3; i++) srv.script("POST /api/generate-video", { json: { runId: "vid_" + i, cost: 0 } });
+  srv.script("GET /api/video/status", [done, done, done]);
+
+  const nodes = [
+    { id: "u1", type: "upload", fields: { image: PNG_DATA_URL } },
+    { id: "u2", type: "upload", fields: { image: PNG_DATA_URL } },
+    { id: "v1", type: "tvideo", fields: { model: "luma-like", prompt: "morph" } },
+  ];
+  const links = [
+    { id: "l1", from: { node: "u1", port: "image" }, to: { node: "v1", port: "ref1" } },
+    { id: "l2", from: { node: "u2", port: "image" }, to: { node: "v1", port: "ref2" } },
+  ];
+
+  // model declares reference_image_urls with max 1 → refs ride that key, clamped, with a note
+  const notes = [];
+  const catalog = { video: [{ id: "luma-like", supported_parameters: { parameters: {
+    reference_image_urls: { max: 1 },
+  } } }] };
+  await one(srv, nodes, links, { catalog }).run({}, { onProgress: (e) => { if (e.type === "node-progress") notes.push(e.message); } });
+  const b1 = srv.of("POST /api/generate-video")[0].json;
+  assert.deepEqual(b1.reference_image_urls, [PNG_DATA_URL], "2 refs capped to the declared max of 1");
+  assert.equal(b1.reference_images, undefined, "hardcoded spelling never sent when the model names another");
+  assert.ok(notes.some((m) => /dropped 1 reference image/.test(m)), "over-cap drop note emitted");
+
+  // model KNOWN to take no refs → wires ignored (degraded render, never a bad param), with a note
+  const notes2 = [];
+  await one(srv, nodes, links, { catalog: { video: [{ id: "luma-like", supported_parameters: { parameters: {} } }] } })
+    .run({}, { onProgress: (e) => { if (e.type === "node-progress") notes2.push(e.message); } });
+  const b2 = srv.of("POST /api/generate-video")[1].json;
+  assert.equal(b2.reference_images, undefined);
+  assert.equal(b2.reference_image_urls, undefined);
+  assert.ok(notes2.some((m) => /reference image\(s\) ignored/.test(m)), "ignored note emitted");
+
+  // vedit honors ref wires the same way (no catalog → most-common spelling, refMaxFor cap)
+  const vnodes = [
+    { id: "u1", type: "upload", fields: { image: PNG_DATA_URL } },
+    { id: "w1", type: "vupload", fields: { video: "data:video/mp4;base64,AAAA" } },
+    { id: "v1", type: "vedit", fields: { model: "seedance-2.0-edit", prompt: "restyle" } },
+  ];
+  const vlinks = [
+    { id: "l1", from: { node: "w1", port: "video" }, to: { node: "v1", port: "video" } },
+    { id: "l2", from: { node: "u1", port: "image" }, to: { node: "v1", port: "ref1" } },
+  ];
+  await one(srv, vnodes, vlinks).run({});
+  const b3 = srv.of("POST /api/generate-video")[2].json;
+  assert.deepEqual(b3.reference_images, [PNG_DATA_URL], "vedit forwards wired refs");
+});
+
 test("video dims: catalog wire-name mapping (orientation/seconds) + default backfill", async (t) => {
   const srv = await startMockServer();
   t.after(() => srv.close());
