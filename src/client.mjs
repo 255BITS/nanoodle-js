@@ -233,7 +233,11 @@ export class NanoClient {
   }
 
   /** POST /api/generate-video then poll GET /api/video/status?requestId= until COMPLETED. */
-  async video(model, prompt, opts = {}, imageDataUrl, { onCost, onPoll, signal } = {}) {
+  // io.onRunId(runId) fires the moment a FRESH submit returns its job id — a caller
+  // keeping a resume registry (play's PENDING_VIDEO) records it before any await.
+  // io.resume (a runId) skips the submit — and its charge — and goes straight to
+  // polling: how a timed-out job is picked back up without paying twice.
+  async video(model, prompt, opts = {}, imageDataUrl, { onCost, onPoll, onRunId, resume, signal } = {}) {
     const body = { model, prompt };
     if (opts.duration) body.duration = opts.duration;
     if (opts.aspect_ratio) body.aspect_ratio = opts.aspect_ratio;
@@ -258,12 +262,16 @@ export class NanoClient {
     if (opts.orientation) body.orientation = opts.orientation;
     if (opts.resolution_ratio) body.resolution_ratio = opts.resolution_ratio;
     if (opts.refImages && opts.refImages.length) body[opts.refKey || "reference_images"] = opts.refImages; // wired refs win last
-    const r = await this._postJson("/api/generate-video", body, signal);
-    if (!r.ok) throw httpError(r.status, await r.text());
-    const j = await r.json();
-    if (onCost) onCost(costWithHeaders(j, r));
-    const runId = j.runId || j.id;
-    if (!runId) throw new NanoodleError("no runId returned");
+    let runId = resume || null;
+    if (!runId) {
+      const r = await this._postJson("/api/generate-video", body, signal);
+      if (!r.ok) throw httpError(r.status, await r.text());
+      const j = await r.json();
+      if (onCost) onCost(costWithHeaders(j, r));
+      runId = j.runId || j.id;
+      if (!runId) throw new NanoodleError("no runId returned");
+      if (onRunId) onRunId(runId);
+    }
 
     const t0 = Date.now();
     while (Date.now() - t0 < this.timeouts.video) {
@@ -290,8 +298,18 @@ export class NanoClient {
     throw new NanoodleError(`video timed out (${Math.round(this.timeouts.video / 1000)}s) — the job may still be running on NanoGPT's side`, { code: "timeout" });
   }
 
-  /** POST /api/v1/audio/speech (music + tts + remix). Returns an audio URL (https or data:). */
-  async audio(model, input, extra = {}, { onCost, onPoll, signal } = {}) {
+  /**
+   * POST /api/v1/audio/speech (music + tts + remix). Returns an audio URL (https or data:).
+   * io.onRunId(job) fires when an async job enters the poll branch (job = the submit
+   * response — runId + refund metadata the status poll needs); io.resume (that same job
+   * object) skips the submit + charge and resumes polling a prior run's job.
+   */
+  async audio(model, input, extra = {}, { onCost, onPoll, onRunId, resume, signal } = {}) {
+    if (resume) {
+      const url = await this._pollAudio(model, resume, { onPoll, signal });
+      if (!url) throw new NanoodleError("no audio url in response");
+      return url;
+    }
     const body = Object.assign({ model, input }, extra);
     const r = await this._postJson("/api/v1/audio/speech", body, signal);
     if (!r.ok) throw httpError(r.status, await r.text());
@@ -300,7 +318,10 @@ export class NanoClient {
       const j = await r.json();
       if (onCost) onCost(costWithHeaders(j, r));
       let url = j.url || j.audioUrl || (j.data && j.data.url) || (j.data && j.data.audioUrl);
-      if (!url && (j.runId || j.id)) url = await this._pollAudio(model, j, { onPoll, signal });
+      if (!url && (j.runId || j.id)) {
+        if (onRunId) onRunId(j);
+        url = await this._pollAudio(model, j, { onPoll, signal });
+      }
       if (!url) throw new NanoodleError("no audio url in response");
       return url;
     }
