@@ -81,7 +81,7 @@ Long-term goal: **one engine** — browser UI shells call into `nanoodle-js` (or
 | **C** | Close remaining fidelity gaps (inpaint mask composite onto black @ source size; `run({}, { defaults: false })` = play's fields-authoritative contract) | Done (v0.3–0.4) |
 | **D** | Split local-media so pure paths need no `node:child_process` / hard zlib at import time (env-adaptive zlib.mjs; PNG codec + share decode async & Buffer-free) | Done (v0.4) |
 | **E** | play export / `NoodleApp.runGraph` delegates network runs to the package (UI + orchestration stay in play; flag-gated: `?engine=js` / `njs_engine=1`, default off; bundle via nanoodle `scripts/gen-js-engine.mjs`) | Landed (flag off) |
-| **F** | Editor `runGroup` optional path through the same engine (seed-cache / partial-run as library options) | Later |
+| **F** | Editor `runGroup` delegates network runs to the package, same seam as play (UI + orchestration — groups, seed cache, retry reuse, poison-propagate, pending-job resume, demo — stay in index.html; flag-gated: `?engine=js` / `njs_engine=1`, default off). The editor lazy-loads `vendor/njs-engine.js` (emitted by nanoodle `scripts/gen-js-engine.mjs` alongside the play block) only when the flag is on, so the landing page carries none of its weight. Known library gaps are vetoed back to the built-in runners per run (image `variations>1` clamp-on-miss, tvideo wired refs, `blob:` media inputs) and vedit/lipsync stay excluded until this package matches the editor's refs handling and charged-aware lipsync trim-retry. Parity proof: nanoodle `scripts/check-njs-editor-delegation.mjs` | Landed (flag off) |
 
 ### Browser entry (Phase A)
 

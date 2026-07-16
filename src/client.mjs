@@ -186,7 +186,9 @@ export class NanoClient {
     if (onCost) onCost(costWithHeaders(j, r));
     const msg = (j.choices && j.choices[0] && j.choices[0].message) || {};
     const txt = msg.content;
-    if (txt == null || txt === "") throw new NanoodleError("no text in response");
+    // empty-string content is a billed-but-empty reply, not a protocol failure — return it
+    // (showThinking can still surface msg.reasoning), matching the editor/play built-in parsers
+    if (txt == null) throw new NanoodleError("no text in response");
     let out = typeof txt === "string" ? txt : txt.map((p) => p.text || "").join("");
     if (opts.showThinking && msg.reasoning) {
       out = "```thinking\n" + msg.reasoning + "\n```\n\n" + out;
