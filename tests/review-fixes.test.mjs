@@ -212,6 +212,29 @@ test("run({'System prompt': ''}) sends NO system message (default only backfills
   assert.equal(msgs[0].content, "You are a helpful, concise assistant.");
 });
 
+test("run({}, { defaults: false }) never backfills defs — graph fields are authoritative (play delegation)", async (t) => {
+  const srv = await startMockServer();
+  t.after(() => srv.close());
+  srv.script("POST /api/v1/chat/completions", chatJson("ok"));
+
+  // blank system + unsupplied input: play UI writes defs into fields itself, so a
+  // blank field means the user cleared it — the engine must not re-inject the default
+  const graph = { nodes: [{ id: "n1", type: "llm", fields: { model: "m", prompt: "hi", system: "" } }], links: [] };
+  await Workflow.fromJSON(graph, mockOpts(srv)).run({}, { defaults: false });
+  assert.deepEqual(srv.requests[0].json.messages.map((m) => m.role), ["user"]);
+
+  // non-empty fields stay authoritative — defaults:false only suppresses backfill, not values
+  const kept = { nodes: [{ id: "n1", type: "llm", fields: { model: "m", prompt: "hi", system: "You are terse." } }], links: [] };
+  await Workflow.fromJSON(kept, mockOpts(srv)).run({}, { defaults: false });
+  assert.equal(srv.requests[1].json.messages[0].content, "You are terse.");
+
+  // blank REQUIRED input still errors upfront under defaults:false
+  const bare = { nodes: [{ id: "n1", type: "llm", fields: { model: "m", prompt: "", system: "" } }], links: [] };
+  await assert.rejects(
+    Workflow.fromJSON(bare, mockOpts(srv)).run({}, { defaults: false }),
+    /missing required input/);
+});
+
 /* ---------------- https audio into an llm audio port ---------------- */
 
 test("hosted https audio wired into llm is downloaded and inlined as base64, never sent as a URL string", async (t) => {
