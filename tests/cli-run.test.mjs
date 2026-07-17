@@ -165,3 +165,25 @@ test("CLI: init accepts a custom path and the result inspects cleanly offline", 
   assert.match(insp.stdout, /"Text"/);
   assert.match(insp.stdout, /"Image"/);
 });
+
+test("CLI: hosted media outputs are named from the download's Content-Type, not .bin", async (t) => {
+  const srv = await startMockServer();
+  t.after(() => srv.close());
+  srv.script("POST /api/v1/chat/completions", chatJson("a vivid ramen-shop prompt"));
+  // API hands back a hosted URL (no b64_json) — the mime is only knowable after fetching it
+  srv.script("POST /v1/images/generations", {
+    headers: { "x-remaining-balance": "4.85" },
+    json: { data: [{ url: srv.url + "/media/out" }], cost: 0.02 },
+  });
+  srv.script("GET /media/out", {
+    headers: { "content-type": "image/png" },
+    body: Buffer.from(PNG_B64, "base64"),
+  });
+  const cwd = await mkdtemp(join(tmpdir(), "nanoodle-cli-"));
+
+  const r = await runCli(["run", starterFixture, "--input", "Text=a moonlit koi pond"],
+    { cwd, env: { NANOGPT_BASE_URL: srv.url } });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(JSON.parse(r.stdout).outputs.Image, join("noodle-out", "Image.png"));
+  await stat(join(cwd, "noodle-out", "Image.png")); // throws if missing (e.g. saved as Image.bin)
+});

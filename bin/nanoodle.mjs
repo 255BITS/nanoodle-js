@@ -18,7 +18,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, extname } from "node:path";
 import process from "node:process";
 import { Workflow, RunError, mediaFromFile } from "../src/index.mjs";
-import { MediaRef, extForMime } from "../src/media.mjs";
+import { MediaRef, extForMime, sniffMime } from "../src/media.mjs";
 
 const HELP = `nanoodle — run nanoodle.com visual AI workflows from the terminal
 
@@ -248,8 +248,10 @@ then: NANOGPT_API_KEY=... nanoodle run ${dest} --input Text="your idea"`);
     if (value instanceof MediaRef) {
       if (!dirMade) { await mkdir(dir, { recursive: true }); dirMade = true; }
       const safe = o.key.replace(/[^\w.-]+/g, "_");
-      const path = join(dir, safe + "." + extForMime(value.mime || ""));
-      await value.save(path);
+      // fetch before naming: hosted media only reveals its mime via the response Content-Type
+      const data = await value.bytes();
+      const path = join(dir, safe + "." + extForMime(value.mime || sniffMime(data)));
+      await writeFile(path, data);
       printable[o.key] = path;
       if (!quiet) console.error(`${o.key}: saved ${path}`);
     } else {
