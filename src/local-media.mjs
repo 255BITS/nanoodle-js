@@ -690,6 +690,45 @@ export async function resizeCropImage(url, mode, tw, th, { fetch: fetchFn, signa
   return resizeCropImageFfmpeg(url, m, w, h, { fetch: fetchFn, signal });
 }
 
+/* ---------- fit an oversized image under the inline send budget ------------ */
+
+/** Ladder of long-edge caps tried in order; "fit" never upscales, so a dense
+    small image just re-encodes at its own size until a smaller rung shrinks it. */
+const FIT_DIMS = [2048, 1448, 1024, 724, 512];
+/** Headroom under MEDIA_INLINE_MAX for the JSON envelope around the data URL
+    (model id, prompt, opts) so a just-fitting image doesn't tip the whole body over. */
+export const INLINE_IMAGE_BUDGET = MEDIA_INLINE_MAX - 128 * 1024;
+
+/**
+ * Return `url` unchanged when it already fits the inline send budget; otherwise
+ * downscale it (aspect preserved) until it does. NanoGPT has no upload endpoint —
+ * media rides base64 inside a ~4.4 MB request body (verified live: 413
+ * FUNCTION_PAYLOAD_TOO_LARGE at 4.5 MB) — so an image over the budget is a
+ * guaranteed reject; a resized frame beats a dead node. http(s) URLs pass through
+ * (they ride by reference). Callers announce the shrink via onShrink/progress.
+ */
+export async function fitImageInline(url, { budget = INLINE_IMAGE_BUDGET, fetch: fetchFn, signal, onShrink } = {}) {
+  if (typeof url !== "string" || !url.startsWith("data:") || url.length <= budget) return url;
+  for (const dim of FIT_DIMS) {
+    throwIfAborted(signal);
+    let out;
+    try {
+      out = await resizeCropImage(url, "fit", dim, dim, { fetch: fetchFn, signal });
+    } catch (e) {
+      // pure-PNG path refuses results still over MEDIA_INLINE_MAX at this rung → try smaller
+      if (e instanceof NanoodleError && /inline limit/i.test(e.message || "")) continue;
+      throw new NanoodleError(
+        "image is too large to send inline (~4 MB max) and couldn't be resized down (" +
+        (e && e.message ? e.message : e) + ") — use a smaller image");
+    }
+    if (out.length <= budget) {
+      if (onShrink) onShrink(dim);
+      return out;
+    }
+  }
+  throw new NanoodleError("image is too large to send inline even after resizing (~4 MB max) — use a smaller image");
+}
+
 async function resizeCropImageFfmpeg(url, m, w, h, { fetch: fetchFn, signal } = {}) {
   return withTemp(async (dir) => {
     throwIfAborted(signal);
