@@ -4,7 +4,7 @@ import { IMG_PORT_RE, EDIT_IMG_RE, REF_PORT_RE, CLIP_PORT_RE, VID_PORT_RE, optio
 import { MEDIA_INLINE_MAX } from "./media.mjs";
 import {
   resizeCropImage, trimAudioToWav, extractAudioToWav,
-  extractVideoFrames, concatVideos, muxSoundtrack, maskToSource,
+  extractVideoFrames, concatVideos, muxSoundtrack, maskToSource, fitImageInline,
 } from "./local-media.mjs";
 
 function mdl(n) {
@@ -25,6 +25,23 @@ function mediaOpts(ctx) {
 function portIdx(name) {
   const m = /(\d+)$/.exec(name);
   return m ? +m[1] : 1;
+}
+
+/**
+ * Shrink an inline image under the ~4.4 MB request-body budget before a paid send —
+ * over it, NanoGPT 413s (FUNCTION_PAYLOAD_TOO_LARGE, verified live; there is no upload
+ * endpoint), so a downscaled image beats a dead node. Modern image models routinely
+ * return 4K PNGs (~13 MB as base64), which killed every generate→animate/edit chain.
+ * Browser hosts may inject ctx.fitImage (canvas path); default is local-media's
+ * (pure-JS for PNG, ffmpeg otherwise). http(s) URLs and already-fitting images pass
+ * through untouched.
+ */
+async function fitImage(url, ctx, what) {
+  if (url == null) return url;
+  const fit = (ctx && ctx.fitImage) || fitImageInline;
+  const out = await fit(url, mediaOpts(ctx));
+  if (out !== url && ctx && ctx.progress) ctx.progress(what + " resized to fit the ~4 MB send limit");
+  return out;
 }
 
 function collectPorts(inp, re) {
@@ -487,7 +504,7 @@ export const RUNNERS = {
 
   async llm(n, inp, ctx) {
     const prompt = promptOf(n, inp, "no prompt");
-    const imgs = collectPorts(inp, IMG_PORT_RE);
+    const imgs = await Promise.all(collectPorts(inp, IMG_PORT_RE).map((u) => fitImage(u, ctx, "wired image")));
     // hosted audio (music/tts nodes return https CDN URLs verbatim) → download + inline as base64:
     // the chat input_audio part carries bytes, never a URL
     let audioPart = null;
@@ -511,9 +528,10 @@ export const RUNNERS = {
   async vision(n, inp, ctx) {
     if (!inp.image) throw new NanoodleError("no image input");
     const q = (n.fields.q || "Describe this image.").trim();
+    const img = await fitImage(inp.image, ctx, "image");
     const messages = [{
       role: "user",
-      content: [{ type: "text", text: q }, { type: "image_url", image_url: { url: inp.image } }],
+      content: [{ type: "text", text: q }, { type: "image_url", image_url: { url: img } }],
     }];
     return { text: await ctx.chat(messages, mdl(n), {}) };
   },
@@ -546,6 +564,7 @@ export const RUNNERS = {
     }
     const prompt = promptOf(n, inp);
     if (!prompt && !/upscal/i.test(n.fields.model || "")) throw new NanoodleError("no edit instruction");
+    imgs = await Promise.all(imgs.map((u) => fitImage(u, ctx, "source image")));
     guardRefsSize(imgs);
     const src = imgs.length > 1 ? imgs : imgs[0]; // array → multi-image composite; string → single edit
     return { image: await ctx.image({ prompt, model: mdl(n), size: n.fields.size || "1024x1024", imageDataUrl: src, extra: imgExtra(n) }) };
@@ -553,7 +572,7 @@ export const RUNNERS = {
 
   async draw(n, inp, ctx) {
     const prompt = promptOf(n, inp, "no prompt");
-    const imgs = collectPorts(inp, IMG_PORT_RE);
+    const imgs = await Promise.all(collectPorts(inp, IMG_PORT_RE).map((u) => fitImage(u, ctx, "wired image")));
     guardRefsSize(imgs);
     const messages = chatMessages(n, prompt, imgs, null);
     const res = await ctx.chatImage(messages, mdl(n), {});
@@ -589,8 +608,8 @@ export const RUNNERS = {
     if (!inp.image) throw new NanoodleError("no image input");
     const prompt = promptOf(n, inp);
     const opts = { ...videoDims(n, ctx), lora: loraParams(n), extra: n.fields.modelOpts || {} };
-    if (inp.endframe) opts.last_image = inp.endframe;
-    return { video: await ctx.video(mdl(n), prompt, opts, inp.image) };
+    if (inp.endframe) opts.last_image = await fitImage(inp.endframe, ctx, "end frame");
+    return { video: await ctx.video(mdl(n), prompt, opts, await fitImage(inp.image, ctx, "source image")) };
   },
 
   async vedit(n, inp, ctx) {
@@ -614,6 +633,7 @@ export const RUNNERS = {
     // ctx.trimAudio lets a browser host inject its Web Audio trimmer so the retry bytes match
     // its built-in runner exactly; default is the local-media trimmer (pure-JS WAV, ffmpeg).
     const trim = ctx.trimAudio || ((url, start, len, rate) => trimAudioToWav(url, start, len, rate, mediaOpts(ctx)));
+    const img = await fitImage(inp.image, ctx, "portrait image");
     let trimSec = null;
     for (let attempt = 0; attempt < 2; attempt++) {
       let opts;
@@ -636,7 +656,7 @@ export const RUNNERS = {
       Object.assign(opts, videoDims(n, ctx));
       opts.extra = n.fields.modelOpts || {};
       try {
-        return { video: await ctx.video(mdl(n), prompt, opts, inp.image) };
+        return { video: await ctx.video(mdl(n), prompt, opts, img) };
       } catch (e) {
         if (attempt > 0) throw e;
         const msg = (e && e.message) || "";

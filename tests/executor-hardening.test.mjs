@@ -156,19 +156,22 @@ test("local-only graph accepts oversized data: media input", async () => {
   await assert.doesNotReject(() => wf.run({ Video: bigUrl }));
 });
 
-test("network graph still refuses oversized media inputs", async () => {
-  const bigUrl = "data:image/png;base64," + "A".repeat(Math.floor(MEDIA_INLINE_MAX));
+test("network graph still refuses oversized audio inputs before any spend", async () => {
+  // Image inputs are deferred to the consuming node (fitImage downscales them —
+  // see inline-image-fit.test.mjs); audio/video can't be shrunk that way, so the
+  // early load-time guard stays for them.
+  const bigUrl = "data:audio/wav;base64," + "A".repeat(Math.floor(MEDIA_INLINE_MAX));
   assert.ok(bigUrl.length > MEDIA_INLINE_MAX);
   const wf = Workflow.fromJSON({
     nodes: [
-      { id: "u", type: "upload", fields: {} },
-      { id: "i", type: "image", fields: { model: "m", prompt: "x" } },
+      { id: "u", type: "aupload", fields: {} },
+      { id: "s", type: "transcribe", fields: { model: "m" } },
     ],
     links: [
-      { from: { node: "u", port: "image" }, to: { node: "i", port: "img1" } },
+      { from: { node: "u", port: "audio" }, to: { node: "s", port: "audio" } },
     ],
   }, { apiKey: "k" });
-  await assert.rejects(() => wf.run({ Image: bigUrl }), /too large to send inline/);
+  await assert.rejects(() => wf.run({ Audio: bigUrl }), /too large to send inline/);
 });
 
 /* ---------- pure WAV truncated header clamp ---------- */

@@ -374,7 +374,13 @@ export class Workflow {
 
   _coerceInput(entry, value, mediaOpts) {
     if (MEDIA_KINDS.has(entry.kind)) {
-      return coerceMediaInput(value, `input "${entry.key}"`, mediaOpts);
+      // Plain image inputs skip the load-time inline cap: every image-sending node
+      // downscales an oversized image to the send budget (fitImage), so a big photo
+      // is a shrink, not a refusal. Audio/video (and inpaint, whose mask must keep
+      // the source's dimensions) can't be shrunk that way — keep their early,
+      // before-any-spend guard.
+      const opts = entry.kind === "image" ? { ...mediaOpts, enforceInlineMax: false } : mediaOpts;
+      return coerceMediaInput(value, `input "${entry.key}"`, opts);
     }
     if (entry.kind === "choice") {
       const v = String(value);
